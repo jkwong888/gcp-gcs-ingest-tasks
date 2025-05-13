@@ -122,6 +122,16 @@ func (h *TaskHandler) handleB64(w http.ResponseWriter, t TaskStruct) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// healthCheckHandler responds to health check requests.
+// It should return a 200 OK status if the server is healthy.
+func (h *TaskHandler) HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	// In a simple case, just returning a 200 OK is sufficient
+	// if the only check is whether the HTTP server is listening.
+	w.WriteHeader(http.StatusOK) // HTTP 200 OK
+	fmt.Fprintf(w, "OK")         // Optional: return a body
+	h.log.Sugar().Debug("Health check request received: OK")
+}
+
 func (h *TaskHandler) Handler(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case "POST":
@@ -209,6 +219,7 @@ func main() {
 	handler := InitTaskHandler(cfg, logger)
 
 	http.HandleFunc("/", handler.Handler)
+	http.HandleFunc("/health", handler.HealthCheckHandler)
 
 	logger.Sugar().Infof("Simulating initialization of %d seconds ...", cfg.InitSleepSec)
 	time.Sleep(time.Duration(cfg.InitSleepSec) * time.Second)
