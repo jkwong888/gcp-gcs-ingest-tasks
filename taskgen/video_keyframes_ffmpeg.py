@@ -3,6 +3,9 @@ import asyncio
 import os
 import subprocess
 from google.cloud import storage
+import google.auth
+import google.auth.transport.requests
+import google.oauth2.id_token
 import logging
 import sys
 import time
@@ -163,7 +166,7 @@ async def async_upload_bytes_to_gcs(bucket_name: str, blob_name: str, data_bytes
     return success
 
 
-async def async_send_bytes_to_handler(data_bytes: bytes, handler_url: str):
+async def async_send_bytes_to_handler(data_bytes: bytes, handler_url: str, id_token: str):
     """
     Sends an asynchronous POST request to the specified URL.
 
@@ -174,7 +177,10 @@ async def async_send_bytes_to_handler(data_bytes: bytes, handler_url: str):
     Returns:
         httpx.Response or None: The httpx Response object if successful, None otherwise.
     """
-    headers = {"Content-Type": "application/json"} # Default for JSON payload
+    headers = {
+        "Content-Type": "application/json", # Default for JSON payload
+        "Authorization": f"Bearer {id_token}",
+    } 
     
     encoded_base64_bytes = base64.b64encode(data_bytes)
     encoded_base64_str = encoded_base64_bytes.decode("utf-8")
@@ -208,9 +214,55 @@ async def async_send_bytes_to_handler(data_bytes: bytes, handler_url: str):
         except Exception as e:
             logging.error(f"An unexpected error occurred: {e}")
 
+async def get_id_token_async(audience_url: str) -> str:
+    """
+    Asynchronously fetches a Google-signed ID token for the given audience.
+
+    This function automatically handles where it's running:
+    - On Google Cloud (e.g., Cloud Run, GCE): Uses the metadata server.
+    - Locally (with GOOGLE_APPLICATION_CREDENTIALS): Uses the service account key.
+
+    Args:
+        audience_url (str): The full URL of the Cloud Run service you want to invoke.
+                            e.g., "https://my-service-12345-uc.a.run.app"
+
+    Returns:
+        str: The Google-signed ID token.
+    Raises:
+        google.auth.exceptions.DefaultCredentialsError: If credentials cannot be obtained.
+        Exception: For other errors during token fetching.
+    """
+    logging.info(f"Attempting to get ID token for audience: {audience_url}")
+    try:
+        # Create an AuthRequest object. This wraps an httpx.AsyncClient
+        # if httpx is installed, or urllib.request.Request otherwise.
+        # We'll use httpx directly later for the main request.
+        # For fetching the ID token, google-auth handles the underlying HTTP request.
+        auth_req = google.auth.transport.requests.Request()
+
+        # fetch_id_token intelligently determines the credential source
+        # (metadata server or service account key via GOOGLE_APPLICATION_CREDENTIALS).
+        id_token = await asyncio.to_thread(google.oauth2.id_token.fetch_id_token, auth_req, audience_url)
+        logging.info("Successfully fetched ID token.")
+        return id_token
+    except google.auth.exceptions.DefaultCredentialsError as e:
+        logging.error(f"Could not obtain default credentials: {e}")
+        logging.error("Ensure GOOGLE_APPLICATION_CREDENTIALS is set for local development, or your service account has roles for Cloud Run Invoker.")
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching ID token: {e}")
+        raise
 
 async def send_png_to_api(png_detection_task, bucket_name: str = None, handler_url: str = None):
     extracted_count = 0
+
+    if handler_url is not None:
+        id_token = await get_id_token_async(handler_url)
+
+        if not id_token:
+            logging.error("Failed to obtain ID token, cannot send authenticated request.")
+            return None
+
     async for image_bytes in png_detection_task:
         extracted_count += 1
         output_base_name = "keyframes/asdf"
@@ -222,7 +274,7 @@ async def send_png_to_api(png_detection_task, bucket_name: str = None, handler_u
             if bucket_name is not None:
                 tasks.append(asyncio.create_task(async_upload_bytes_to_gcs(bucket_name, f"{output_base_name}_frame_{extracted_count:05d}.png", image_bytes, "image/png")))
             if handler_url is not None:
-                tasks.append(asyncio.create_task(async_send_bytes_to_handler(image_bytes, handler_url)))
+                tasks.append(asyncio.create_task(async_send_bytes_to_handler(image_bytes, handler_url, id_token)))
 
         except Exception as e:
             logging.error(f"Failed to process extracted PNG {extracted_count}: {e}")
