@@ -1,4 +1,4 @@
-FROM node:18 as builder
+FROM node:20 as builder
 
 WORKDIR /usr/src/app
 
@@ -15,7 +15,7 @@ RUN npm test
 RUN npm run build
 
 
-FROM node:18-slim
+FROM node:20-slim
 
 WORKDIR /usr/src/app
 
