@@ -29,7 +29,7 @@ resource "google_cloud_run_v2_service" "taskapi" {
 
   template {
     containers {
-      image = var.taskapi_image
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
       ports { 
         container_port = 8000
       }
@@ -97,7 +97,7 @@ resource "google_cloud_run_v2_service" "taskhandler" {
 
   template {
     containers {
-      image = var.taskhandler_image
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
       ports { 
         container_port = 8090
       }

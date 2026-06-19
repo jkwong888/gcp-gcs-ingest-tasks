@@ -20,12 +20,13 @@ resource "google_storage_notification" "notification" {
   payload_format = "JSON_API_V1"
   topic          = google_pubsub_topic.file_uploads.id
   event_types    = ["OBJECT_FINALIZE", "OBJECT_METADATA_UPDATE"]
-  object_name_prefix = "upload/"
+  object_name_prefix = "input/"
   depends_on = [google_pubsub_topic_iam_binding.binding]
 }
 
 // Enable notifications by giving the correct IAM permission to the unique service account.
 data "google_storage_project_service_account" "gcs_account" {
+  depends_on = [ module.service_project ]
   project   = module.service_project.project_id
 }
 

@@ -26,7 +26,7 @@ module "service_project" {
   subnet_users                = [
   //  google_service_account.gke_sa.email
   ]
-  skip_delete = false
+  skip_delete = "DELETE"
 }
 
 

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/png"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -83,10 +86,40 @@ func (h *TaskHandler) parseBucketPath(gcsPath string) (string, string, error) {
 
 	path := strings.TrimPrefix(gcsPath, "gs://")
 	bucketArr := strings.SplitN(path, "/", 2)
+	if len(bucketArr) < 2 {
+		return "", "", fmt.Errorf("invalid GCS location format: %v", gcsPath)
+	}
 	bucketName := bucketArr[0]
 	filePath := bucketArr[1]
 
 	return bucketName, filePath, nil
+}
+
+func (h *TaskHandler) writeStatus(ctx context.Context, bucketName, jobId, status string, extra map[string]interface{}) error {
+	bucket := h.cfg.GcsClient.Bucket(bucketName)
+	obj := bucket.Object("results/" + jobId + ".json")
+
+	data := map[string]interface{}{
+		"jobId":     jobId,
+		"status":    status,
+		"updatedAt": time.Now().Format(time.RFC3339),
+	}
+	for k, v := range extra {
+		data[k] = v
+	}
+
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	w := obj.NewWriter(ctx)
+	w.ContentType = "application/json"
+	if _, err := w.Write(bytes); err != nil {
+		w.Close()
+		return err
+	}
+	return w.Close()
 }
 
 func (h *TaskHandler) handleInput(i image.Image) {
@@ -97,38 +130,27 @@ func (h *TaskHandler) handleInput(i image.Image) {
 func (h *TaskHandler) handleB64(w http.ResponseWriter, t TaskStruct) {
 	h.log.Sugar().Debugf("handling b64 encoded input ...")
 
-	// decodedBytes, err := base64.StdEncoding.DecodeString(*t.B64Input)
-	// if err != nil {
-	// 	h.log.Sugar().Errorf("error decoding string: %s", err)
-	// 	w.WriteHeader(http.StatusBadRequest)
-	// 	return
-	// }
-
 	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(*t.B64Input))
 
-	// reader := bytes.NewReader(decodedBytes)
-
-	img, err := png.Decode(reader)
+	// In Go, image/png must be registered, we do it via side-effect import.
+	// We imported _ "image/png" via side-effect import in Go or just use png.Decode.
+	img, err := image.Decode(reader)
 	if err != nil {
 		h.log.Sugar().Errorf("error decoding image: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	h.log.Sugar().Infof("Decoded image format %s, %dx%d ...", "png", img.Bounds().Dx(), img.Bounds().Dy())
+	h.log.Sugar().Infof("Decoded image format %dx%d ...", img.Bounds().Dx(), img.Bounds().Dy())
 
 	h.handleInput(img)
 
 	w.WriteHeader(http.StatusOK)
 }
 
-// healthCheckHandler responds to health check requests.
-// It should return a 200 OK status if the server is healthy.
 func (h *TaskHandler) HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	// In a simple case, just returning a 200 OK is sufficient
-	// if the only check is whether the HTTP server is listening.
-	w.WriteHeader(http.StatusOK) // HTTP 200 OK
-	fmt.Fprintf(w, "OK")         // Optional: return a body
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, "OK")
 	h.log.Sugar().Debug("Health check request received: OK")
 }
 
@@ -152,15 +174,16 @@ func (h *TaskHandler) Handler(w http.ResponseWriter, req *http.Request) {
 
 		h.log.Sugar().Infof("handling request: %s %s, %+v\n", req.Method, req.URL.Path, t)
 		if t.B64Input != nil {
-
-			// if the request is inline, handle it
 			h.handleB64(w, t)
 			return
 		}
 
-		// TODO: if sessionUrl is not null, check if the session is still open
+		if t.JobId == "" {
+			h.log.Sugar().Errorf("jobId is required")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
-		// check if the file exists yet
 		bucketName, objPath, err := h.parseBucketPath(t.Path)
 		if err != nil {
 			h.log.Sugar().Infof("Error parsing path %v: %v\n", t.Path, err)
@@ -168,33 +191,120 @@ func (h *TaskHandler) Handler(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// does the bucket exist?  400 if not
+		ctx := context.TODO()
+
+		// 1. Immediately write RUNNING status to GCS
+		h.log.Sugar().Infof("Updating task status to RUNNING for jobId: %s", t.JobId)
+		err = h.writeStatus(ctx, bucketName, t.JobId, "RUNNING", map[string]interface{}{
+			"gcsPath":       t.Path,
+			"thumbnailPath": "gs://" + bucketName + "/thumbs/" + t.JobId + ".png",
+		})
+		if err != nil {
+			h.log.Sugar().Errorf("Failed to write RUNNING status to GCS: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		// Simulated processing delay to make RUNNING state observable in UI
+		h.log.Sugar().Infof("Simulating processing delay of %d seconds...", h.cfg.HandleInputSleepSec)
+		time.Sleep(time.Duration(h.cfg.HandleInputSleepSec) * time.Second)
+
+		// check bucket
 		bucket := h.cfg.GcsClient.Bucket(bucketName)
 		if bucket == nil {
 			h.log.Sugar().Errorf("Bucket not found: %v\n", bucketName)
+			h.writeStatus(ctx, bucketName, t.JobId, "FAILED", map[string]interface{}{
+				"error":   fmt.Sprintf("Bucket not found: %s", bucketName),
+				"gcsPath": t.Path,
+			})
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		// does the object exist in the bucket?  404 if not
+		// check file
 		file := bucket.Object(objPath)
-		_, err = file.Attrs(context.TODO())
+		_, err = file.Attrs(ctx)
 		if err != nil {
 			if err == storage.ErrObjectNotExist {
 				h.log.Sugar().Errorf("Object not found in bucket %v: %v\n", bucketName, objPath)
+				h.writeStatus(ctx, bucketName, t.JobId, "FAILED", map[string]interface{}{
+					"error":         fmt.Sprintf("Object not found: %s", t.Path),
+					"gcsPath":       t.Path,
+					"thumbnailPath": "gs://" + bucketName + "/thumbs/" + t.JobId + ".png",
+				})
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 
-			// some other error, retry later
-			h.log.Sugar().Errorf("error: %v", err)
+			h.log.Sugar().Errorf("error fetching object attrs: %v", err)
+			h.writeStatus(ctx, bucketName, t.JobId, "FAILED", map[string]interface{}{
+				"error":         fmt.Sprintf("Error accessing object: %v", err),
+				"gcsPath":       t.Path,
+				"thumbnailPath": "gs://" + bucketName + "/thumbs/" + t.JobId + ".png",
+			})
 			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 
-		// if the file exists, status is OK
-		h.log.Sugar().Infof("found bucket %v, path %v\n", bucketName, objPath)
+		// 2. Download the image
+		rc, err := file.NewReader(ctx)
+		if err != nil {
+			h.log.Sugar().Errorf("Failed to read GCS file: %v", err)
+			h.writeStatus(ctx, bucketName, t.JobId, "FAILED", map[string]interface{}{
+				"error":         fmt.Sprintf("Failed to read GCS file: %v", err),
+				"gcsPath":       t.Path,
+				"thumbnailPath": "gs://" + bucketName + "/thumbs/" + t.JobId + ".png",
+			})
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		defer rc.Close()
 
-		// TODO download and handle the file
+		imgBytes, err := ioutil.ReadAll(rc)
+		if err != nil {
+			h.log.Sugar().Errorf("Failed to read image bytes: %v", err)
+			h.writeStatus(ctx, bucketName, t.JobId, "FAILED", map[string]interface{}{
+				"error":         fmt.Sprintf("Failed to read image bytes: %v", err),
+				"gcsPath":       t.Path,
+				"thumbnailPath": "gs://" + bucketName + "/thumbs/" + t.JobId + ".png",
+			})
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		// 3. Decode image
+		img, format, err := image.Decode(bytes.NewReader(imgBytes))
+		if err != nil {
+			h.log.Sugar().Errorf("Failed to decode image: %v", err)
+			h.writeStatus(ctx, bucketName, t.JobId, "FAILED", map[string]interface{}{
+				"error":         fmt.Sprintf("Failed to decode image: %v", err),
+				"gcsPath":       t.Path,
+				"thumbnailPath": "gs://" + bucketName + "/thumbs/" + t.JobId + ".png",
+			})
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		srcBounds := img.Bounds()
+		srcW := srcBounds.Dx()
+		srcH := srcBounds.Dy()
+		h.log.Sugar().Infof("Successfully decoded image: format %s, %dx%d", format, srcW, srcH)
+
+		// 4. Write final COMPLETED status JSON to GCS
+		h.log.Sugar().Infof("Task COMPLETED for jobId: %s", t.JobId)
+		err = h.writeStatus(ctx, bucketName, t.JobId, "COMPLETED", map[string]interface{}{
+			"gcsPath":       t.Path,
+			"width":         srcW,
+			"height":        srcH,
+			"format":        format,
+			"thumbnailPath": "gs://" + bucketName + "/thumbs/" + t.JobId + ".png",
+		})
+		if err != nil {
+			h.log.Sugar().Errorf("Failed to write COMPLETED status to GCS: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
 
 	default:

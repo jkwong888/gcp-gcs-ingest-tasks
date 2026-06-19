@@ -29,6 +29,12 @@ variable "service_project_apis_to_enable" {
   type = list(string)
   default = [
     "compute.googleapis.com",
+    "container.googleapis.com",
+    "run.googleapis.com",
+    "pubsub.googleapis.com",
+    "cloudtasks.googleapis.com",
+    "storage.googleapis.com",
+    "iam.googleapis.com",
   ]
 }
 
@@ -46,6 +52,3 @@ variable "subnets" {
   default = []
 }
 
-
-variable "taskapi_image" {}
-variable "taskhandler_image" {}

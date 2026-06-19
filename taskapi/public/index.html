@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GCS Image Ingest Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="p-2 bg-indigo-600 rounded-lg text-white">
+          <i class="fa-solid fa-cloud-arrow-up text-xl"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-slate-900 leading-none">GCS Ingest Pipeline</h1>
+          <span class="text-xs text-slate-500 font-medium">Image Optimization & Tracking</span>
+        </div>
+      </div>
+      
+      <!-- Stats Overview -->
+      <div class="hidden md:flex space-x-6">
+        <div class="text-right">
+          <div class="text-xs text-slate-400 font-medium uppercase">Total Uploads</div>
+          <div class="text-lg font-bold text-slate-800" id="statTotal">0</div>
+        </div>
+        <div class="border-r border-slate-200"></div>
+        <div class="text-right">
+          <div class="text-xs text-slate-400 font-medium uppercase">Running</div>
+          <div class="text-lg font-bold text-amber-600" id="statRunning">0</div>
+        </div>
+        <div class="border-r border-slate-200"></div>
+        <div class="text-right">
+          <div class="text-xs text-slate-400 font-medium uppercase">Completed</div>
+          <div class="text-lg font-bold text-emerald-600" id="statCompleted">0</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    
+    <!-- Upload Section & Quick Alerts -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      
+      <!-- Drag & Drop Upload Card -->
+      <div class="lg:col-span-1 bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+        <div>
+          <h2 class="text-base font-bold text-slate-900 mb-2">Upload Image</h2>
+          <p class="text-xs text-slate-500 mb-6">Select or drag an image to trigger the processing pipeline (PNG, JPEG, GIF).</p>
+          
+          <div id="dropZone" class="border-2 border-dashed border-slate-200 hover:border-indigo-500 rounded-xl p-8 text-center cursor-pointer transition-colors flex flex-col items-center justify-center bg-slate-50/50">
+            <i class="fa-solid fa-images text-slate-400 text-3xl mb-3"></i>
+            <p class="text-sm font-medium text-slate-700">Click to upload or drag & drop</p>
+            <p class="text-xs text-slate-400 mt-1">PNG, JPG, JPEG, GIF up to 10MB</p>
+            <input type="file" id="fileInput" class="hidden" accept="image/*">
+          </div>
+          
+          <!-- Selected File Info -->
+          <div id="selectedFileInfo" class="hidden mt-4 p-3 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-between">
+            <div class="flex items-center space-x-2 truncate">
+              <i class="fa-solid fa-file-image text-indigo-600"></i>
+              <span id="selectedFilename" class="text-xs font-semibold text-indigo-950 truncate">image.png</span>
+            </div>
+            <button id="clearFileBtn" class="text-indigo-400 hover:text-indigo-600 p-1"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+        </div>
+
+        <div class="mt-6 space-y-3">
+          <!-- Upload Button -->
+          <button id="uploadBtn" disabled class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 shadow-sm">
+            <i class="fa-solid fa-arrow-up-from-bracket"></i>
+            <span>Process Image</span>
+          </button>
+          
+          <!-- Upload Progress / Status -->
+          <div id="uploadProgressContainer" class="hidden space-y-1">
+            <div class="flex justify-between text-xs font-medium">
+              <span id="uploadProgressText" class="text-slate-600">Uploading...</span>
+              <span id="uploadPercent" class="text-slate-800">0%</span>
+            </div>
+            <div class="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+              <div id="uploadProgressBar" class="bg-indigo-600 h-full w-0 transition-all duration-150"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Dashboard / Tasks Table Card -->
+      <div class="lg:col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col justify-between overflow-hidden">
+        
+        <!-- Table Controls / Search & Filters -->
+        <div class="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div class="relative flex-1">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+              <i class="fa-solid fa-magnifying-glass text-sm"></i>
+            </span>
+            <input type="text" id="searchInput" placeholder="Search by filename or task ID..." class="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-slate-50/50">
+          </div>
+          <div class="flex items-center space-x-3">
+            <select id="statusFilter" class="border border-slate-200 rounded-lg py-2 pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white text-slate-700">
+              <option value="ALL">All Statuses</option>
+              <option value="PENDING">Pending</option>
+              <option value="QUEUED">Queued</option>
+              <option value="RUNNING">Running</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="FAILED">Failed</option>
+            </select>
+            <button id="refreshBtn" class="bg-white border border-slate-200 text-slate-700 p-2 rounded-lg hover:bg-slate-50 transition-colors shadow-sm flex items-center justify-center space-x-1 font-medium text-sm">
+              <i class="fa-solid fa-rotate text-slate-500"></i>
+              <span class="hidden sm:inline">Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="flex-1 overflow-x-auto min-h-[350px]">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs font-bold uppercase text-slate-400 tracking-wider">
+                <th class="py-3 px-5 w-20">Preview</th>
+                <th class="py-3 px-5 cursor-pointer hover:bg-slate-100 select-none" id="thFilename">
+                  Filename <i class="fa-solid fa-sort ml-1 text-slate-300"></i>
+                </th>
+                <th class="py-3 px-5">Task ID</th>
+                <th class="py-3 px-5 cursor-pointer hover:bg-slate-100 select-none" id="thUploaded">
+                  Uploaded At <i class="fa-solid fa-sort-down ml-1 text-slate-400"></i>
+                </th>
+                <th class="py-3 px-5 cursor-pointer hover:bg-slate-100 select-none" id="thStatus">
+                  Status <i class="fa-solid fa-sort ml-1 text-slate-300"></i>
+                </th>
+                <th class="py-3 px-5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody" class="divide-y divide-slate-100 text-sm">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+          
+          <!-- Empty State -->
+          <div id="emptyState" class="hidden flex flex-col items-center justify-center py-16 text-center">
+            <i class="fa-solid fa-folder-open text-slate-300 text-5xl mb-3"></i>
+            <p class="text-slate-500 font-medium text-sm">No tasks found</p>
+            <p class="text-slate-400 text-xs mt-1">Upload a file to start the pipeline.</p>
+          </div>
+        </div>
+
+        <!-- Table Footer / Pagination -->
+        <div class="p-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div class="flex items-center space-x-2 text-xs text-slate-500">
+            <span>Show</span>
+            <select id="pageSizeSelect" class="border border-slate-200 rounded py-1 px-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="25">25</option>
+            </select>
+            <span id="paginationInfo">entries</span>
+          </div>
+          <div class="flex items-center space-x-1" id="paginationControls">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Details Modal -->
+  <div id="detailsModal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col animate-[fadeIn_0.2s_ease-out]">
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-slate-150 flex items-center justify-between bg-slate-50">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-circle-info text-indigo-600 text-lg"></i>
+          <h3 class="text-base font-bold text-slate-900">Task Details</h3>
+        </div>
+        <button id="closeModalBtn" class="text-slate-400 hover:text-slate-600 transition-colors"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto space-y-6 flex-1">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- Large Image Preview Container -->
+          <div class="flex flex-col items-center justify-center border border-slate-200 rounded-lg p-3 bg-slate-100 min-h-[220px] relative overflow-hidden group">
+            <img id="modalPreviewImage" src="" alt="Full Preview" class="max-h-[260px] object-contain rounded shadow-sm">
+            <div id="modalPreviewPlaceholder" class="hidden flex flex-col items-center justify-center text-slate-400">
+              <i class="fa-solid fa-image-notch fa-spin text-3xl mb-2 text-indigo-500"></i>
+              <span class="text-xs font-medium">Loading image...</span>
+            </div>
+            <a id="modalDownloadImage" href="#" target="_blank" class="absolute bottom-4 right-4 bg-white/90 hover:bg-white text-slate-700 px-2.5 py-1.5 rounded shadow-sm border border-slate-200 text-xs font-semibold flex items-center space-x-1 transition-all opacity-0 group-hover:opacity-100">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i>
+              <span>Open Original</span>
+            </a>
+          </div>
+
+          <!-- Metadata & Status Timeline -->
+          <div class="space-y-4">
+            <div class="space-y-1.5">
+              <span class="text-xs text-slate-400 font-bold uppercase tracking-wider">File Metadata</span>
+              <div class="grid grid-cols-2 gap-y-2 text-xs bg-slate-50 border border-slate-150 p-3 rounded-lg">
+                <span class="text-slate-500">Filename:</span>
+                <span id="modalFilename" class="font-semibold text-slate-900 truncate text-right">file.png</span>
+                
+                <span class="text-slate-500">Task ID:</span>
+                <span id="modalTaskId" class="font-semibold text-slate-900 text-right select-all">uuid-123</span>
+                
+                <span class="text-slate-500">Uploaded At:</span>
+                <span id="modalUploaded" class="font-semibold text-slate-900 text-right">2026-06-19 12:00</span>
+
+                <span class="text-slate-500">Image Size:</span>
+                <span id="modalDimensions" class="font-semibold text-slate-900 text-right">Pending</span>
+
+                <span class="text-slate-500">Format:</span>
+                <span id="modalFormat" class="font-semibold text-slate-900 uppercase text-right">Pending</span>
+              </div>
+            </div>
+
+            <!-- Pipeline Progress Timeline -->
+            <div class="space-y-2">
+              <span class="text-xs text-slate-400 font-bold uppercase tracking-wider">Processing Timeline</span>
+              <div class="relative pl-6 space-y-4 text-xs font-medium" id="modalTimeline">
+                <!-- Timeline items added dynamically -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- JSON Result -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 font-bold uppercase tracking-wider">Pipeline Raw Output (JSON)</span>
+            <button id="copyJsonBtn" class="text-indigo-600 hover:text-indigo-700 text-xs font-bold flex items-center space-x-1">
+              <i class="fa-solid fa-copy"></i>
+              <span>Copy JSON</span>
+            </button>
+          </div>
+          <div class="bg-slate-950 border border-slate-800 rounded-lg p-4 overflow-x-auto max-h-[220px]">
+            <pre class="text-emerald-400 font-mono text-xs" id="modalJson"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-4 border-t border-slate-150 bg-slate-50 flex justify-end">
+        <button id="closeModalFooterBtn" class="bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold py-2 px-4 rounded-lg text-sm transition-colors shadow-sm">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-6 mt-12">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-xs text-slate-400">
+      <p>© 2026 GCP GCS Ingest Tasks Dashboard. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="hidden fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2.5 max-w-sm border border-slate-700 animate-[slideUp_0.2s_ease-out]">
+    <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400 text-lg"></i>
+    <div class="flex-1 min-w-0">
+      <p id="toastMessage" class="text-xs font-semibold leading-tight">Operation successful</p>
+    </div>
+  </div>
+
+  <style>
+    @keyframes slideUp {
+      from { transform: translateY(100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+  </style>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // Constants & Global State
+    let allTasks = [];
+    let filteredTasks = [];
+    let currentPage = 1;
+    let pageSize = 10;
+    let sortField = 'uploadedAt';
+    let sortAsc = false;
+    let selectedFile = null;
+    let autoRefreshInterval = null;
+
+    // Elements
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const selectedFileInfo = document.getElementById('selectedFileInfo');
+    const selectedFilename = document.getElementById('selectedFilename');
+    const clearFileBtn = document.getElementById('clearFileBtn');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadProgressContainer = document.getElementById('uploadProgressContainer');
+    const uploadProgressText = document.getElementById('uploadProgressText');
+    const uploadPercent = document.getElementById('uploadPercent');
+    const uploadProgressBar = document.getElementById('uploadProgressBar');
+    
+    const searchInput = document.getElementById('searchInput');
+    const statusFilter = document.getElementById('statusFilter');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const tableBody = document.getElementById('tableBody');
+    const emptyState = document.getElementById('emptyState');
+    const pageSizeSelect = document.getElementById('pageSizeSelect');
+    const paginationInfo = document.getElementById('paginationInfo');
+    const paginationControls = document.getElementById('paginationControls');
+
+    const statTotal = document.getElementById('statTotal');
+    const statRunning = document.getElementById('statRunning');
+    const statCompleted = document.getElementById('statCompleted');
+
+    // Details Modal Elements
+    const detailsModal = document.getElementById('detailsModal');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+    const closeModalFooterBtn = document.getElementById('closeModalFooterBtn');
+    const modalPreviewImage = document.getElementById('modalPreviewImage');
+    const modalPreviewPlaceholder = document.getElementById('modalPreviewPlaceholder');
+    const modalDownloadImage = document.getElementById('modalDownloadImage');
+    const modalFilename = document.getElementById('modalFilename');
+    const modalTaskId = document.getElementById('modalTaskId');
+    const modalUploaded = document.getElementById('modalUploaded');
+    const modalDimensions = document.getElementById('modalDimensions');
+    const modalFormat = document.getElementById('modalFormat');
+    const modalTimeline = document.getElementById('modalTimeline');
+    const modalJson = document.getElementById('modalJson');
+    const copyJsonBtn = document.getElementById('copyJsonBtn');
+
+    // Toast Elements
+    const toast = document.getElementById('toast');
+    const toastMessage = document.getElementById('toastMessage');
+    const toastIcon = document.getElementById('toastIcon');
+
+    // Init Page
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchTasks();
+      startAutoRefresh();
+      
+      // Event listeners
+      dropZone.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', handleFileSelect);
+      
+      // Drag & Drop
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-indigo-500', 'bg-indigo-50/20'); });
+      dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/20'); });
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/20');
+        if (e.dataTransfer.files.length > 0) {
+          fileInput.files = e.dataTransfer.files;
+          handleFileSelect();
+        }
+      });
+
+      clearFileBtn.addEventListener('click', clearFile);
+      uploadBtn.addEventListener('click', uploadFile);
+      
+      refreshBtn.addEventListener('click', () => {
+        showToast('Refreshing task list...', 'info');
+        fetchTasks();
+      });
+      
+      searchInput.addEventListener('input', applyFiltersAndRender);
+      statusFilter.addEventListener('change', applyFiltersAndRender);
+      pageSizeSelect.addEventListener('change', (e) => {
+        pageSize = parseInt(e.target.value);
+        currentPage = 1;
+        renderTable();
+      });
+
+      // Sorting Listeners
+      document.getElementById('thFilename').addEventListener('click', () => toggleSort('filename'));
+      document.getElementById('thUploaded').addEventListener('click', () => toggleSort('uploadedAt'));
+      document.getElementById('thStatus').addEventListener('click', () => toggleSort('status'));
+
+      // Modal
+      closeModalBtn.addEventListener('click', hideModal);
+      closeModalFooterBtn.addEventListener('click', hideModal);
+      copyJsonBtn.addEventListener('click', copyModalJson);
+    });
+
+    // Toast Helper
+    function showToast(message, type = 'success') {
+      toastMessage.textContent = message;
+      toast.classList.remove('hidden');
+      
+      if (type === 'success') {
+        toastIcon.className = "fa-solid fa-circle-check text-emerald-400 text-lg";
+      } else if (type === 'error') {
+        toastIcon.className = "fa-solid fa-triangle-exclamation text-rose-500 text-lg";
+      } else {
+        toastIcon.className = "fa-solid fa-circle-info text-blue-400 text-lg";
+      }
+
+      setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 3000);
+    }
+
+    // Auto Refresh
+    function startAutoRefresh() {
+      if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+      autoRefreshInterval = setInterval(() => {
+        fetchTasks(true); // silent fetch (no UI block)
+      }, 5000);
+    }
+
+    // File Selection
+    function handleFileSelect() {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      // Validate MIME Type
+      if (!file.type.startsWith('image/')) {
+        showToast('Invalid file! Only images are allowed.', 'error');
+        clearFile();
+        return;
+      }
+
+      selectedFile = file;
+      selectedFilename.textContent = `${file.name} (${formatBytes(file.size)})`;
+      selectedFileInfo.classList.remove('hidden');
+      dropZone.classList.add('hidden');
+      uploadBtn.removeAttribute('disabled');
+    }
+
+    function clearFile() {
+      selectedFile = null;
+      fileInput.value = '';
+      selectedFileInfo.classList.add('hidden');
+      dropZone.classList.remove('hidden');
+      uploadBtn.setAttribute('disabled', 'true');
+      uploadProgressContainer.classList.add('hidden');
+    }
+
+    // File Upload (Multipart)
+    function uploadFile() {
+      if (!selectedFile) return;
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      uploadBtn.setAttribute('disabled', 'true');
+      uploadProgressContainer.classList.remove('hidden');
+      uploadProgressBar.style.width = '0%';
+      uploadPercent.textContent = '0%';
+      uploadProgressText.textContent = 'Uploading file...';
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload', true);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          uploadProgressBar.style.width = `${percent}%`;
+          uploadPercent.textContent = `${percent}%`;
+          if (percent === 100) {
+            uploadProgressText.textContent = 'Registering with pipeline...';
+          }
+        }
+      };
+
+      xhr.onload = function() {
+        if (xhr.status === 201) {
+          const response = JSON.parse(xhr.responseText);
+          showToast(`File uploaded! Task ID: ${response.taskId.substring(0, 8)}...`);
+          clearFile();
+          fetchTasks();
+        } else {
+          const errorMsg = JSON.parse(xhr.responseText).error || 'Upload failed';
+          showToast(errorMsg, 'error');
+          uploadBtn.removeAttribute('disabled');
+          uploadProgressContainer.classList.add('hidden');
+        }
+      };
+
+      xhr.onerror = function() {
+        showToast('Network error occurred during upload', 'error');
+        uploadBtn.removeAttribute('disabled');
+        uploadProgressContainer.classList.add('hidden');
+      };
+
+      xhr.send(formData);
+    }
+
+    // Fetch Tasks
+    async function fetchTasks(silent = false) {
+      try {
+        const response = await fetch('/api/tasks');
+        if (!response.ok) throw new Error('Failed to fetch tasks');
+        
+        allTasks = await response.json();
+        
+        updateStats();
+        applyFiltersAndRender();
+      } catch (e) {
+        console.error(e);
+        if (!silent) showToast('Failed to fetch tasks', 'error');
+      }
+    }
+
+    // Update Dashboard Metrics
+    function updateStats() {
+      statTotal.textContent = allTasks.length;
+      
+      const running = allTasks.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED').length;
+      const completed = allTasks.filter(t => t.status === 'COMPLETED').length;
+      
+      statRunning.textContent = running;
+      statCompleted.textContent = completed;
+    }
+
+    // Apply filters and Sorting
+    function applyFiltersAndRender() {
+      const search = searchInput.value.toLowerCase().trim();
+      const status = statusFilter.value;
+
+      filteredTasks = allTasks.filter(task => {
+        const matchesSearch = task.filename.toLowerCase().includes(search) || 
+                              task.taskId.toLowerCase().includes(search);
+        
+        const matchesStatus = status === 'ALL' || task.status === status;
+        
+        return matchesSearch && matchesStatus;
+      });
+
+      // Apply Sort
+      filteredTasks.sort((a, b) => {
+        let valA = a[sortField];
+        let valB = b[sortField];
+
+        // If sorting by upload time or date
+        if (sortField === 'uploadedAt') {
+          valA = new Date(valA).getTime();
+          valB = new Date(valB).getTime();
+        }
+
+        if (typeof valA === 'string') {
+          valA = valA.toLowerCase();
+          valB = valB.toLowerCase();
+        }
+
+        if (valA < valB) return sortAsc ? -1 : 1;
+        if (valA > valB) return sortAsc ? 1 : -1;
+        return 0;
+      });
+
+      // Update headers styles
+      updateSortIndicators();
+      
+      currentPage = 1;
+      renderTable();
+    }
+
+    // Update UI headers indicators
+    function updateSortIndicators() {
+      const fields = { filename: 'thFilename', uploadedAt: 'thUploaded', status: 'thStatus' };
+      Object.entries(fields).forEach(([field, elementId]) => {
+        const element = document.getElementById(elementId);
+        if (sortField === field) {
+          element.querySelector('i').className = sortAsc ? "fa-solid fa-sort-up ml-1 text-indigo-600" : "fa-solid fa-sort-down ml-1 text-indigo-600";
+        } else {
+          element.querySelector('i').className = "fa-solid fa-sort ml-1 text-slate-300";
+        }
+      });
+    }
+
+    function toggleSort(field) {
+      if (sortField === field) {
+        sortAsc = !sortAsc;
+      } else {
+        sortField = field;
+        sortAsc = field === 'filename'; // default ASC for names, DESC for dates
+      }
+      applyFiltersAndRender();
+    }
+
+    // Render Table
+    function renderTable() {
+      tableBody.innerHTML = '';
+      
+      if (filteredTasks.length === 0) {
+        emptyState.classList.remove('hidden');
+        paginationInfo.parentElement.classList.add('hidden');
+        return;
+      }
+
+      emptyState.classList.add('hidden');
+      paginationInfo.parentElement.classList.remove('hidden');
+
+      const startIdx = (currentPage - 1) * pageSize;
+      const endIdx = Math.min(startIdx + pageSize, filteredTasks.length);
+      const pageEntries = filteredTasks.slice(startIdx, endIdx);
+
+      // Update footer pagination text
+      document.getElementById('paginationInfo').textContent = `Showing ${startIdx + 1} to ${endIdx} of ${filteredTasks.length} entries`;
+
+      pageEntries.forEach(task => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-50/65 transition-colors cursor-pointer border-b border-slate-100";
+        
+        // Row click opens details
+        tr.addEventListener('click', (e) => {
+          // don't open modal if they clicked delete button
+          if (e.target.closest('.delete-btn')) return;
+          showDetails(task);
+        });
+
+        // Preview Col
+        let previewHtml = '';
+        if (task.status === 'COMPLETED' && task.thumbnailSignedUrl) {
+          previewHtml = `<img src="${task.thumbnailSignedUrl}" class="w-10 h-10 object-cover rounded border border-slate-200">`;
+        } else {
+          previewHtml = `
+            <div class="w-10 h-10 bg-slate-100 rounded border border-slate-200 flex items-center justify-center text-slate-400">
+              <i class="${getStatusPlaceholderIcon(task.status)}"></i>
+            </div>
+          `;
+        }
+
+        tr.innerHTML = `
+          <td class="py-3 px-5">${previewHtml}</td>
+          <td class="py-3 px-5 font-semibold text-slate-900 max-w-[200px] truncate">${task.filename}</td>
+          <td class="py-3 px-5 text-xs font-mono text-slate-500">${task.taskId.substring(0, 8)}...</td>
+          <td class="py-3 px-5 text-xs text-slate-500">${formatDate(task.uploadedAt)}</td>
+          <td class="py-3 px-5">${getStatusBadge(task.status)}</td>
+          <td class="py-3 px-5 text-right">
+            <button class="delete-btn text-slate-400 hover:text-rose-600 p-2 rounded transition-colors" data-id="${task.taskId}" title="Delete Task">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </td>
+        `;
+
+        // Bind delete action
+        tr.querySelector('.delete-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteTask(task.taskId, task.filename);
+        });
+
+        tableBody.appendChild(tr);
+      });
+
+      renderPaginationControls();
+    }
+
+    // Render Pagination Controls
+    function renderPaginationControls() {
+      paginationControls.innerHTML = '';
+      const totalPages = Math.ceil(filteredTasks.length / pageSize);
+      if (totalPages <= 1) return;
+
+      // Prev Button
+      const prevBtn = document.createElement('button');
+      prevBtn.className = `px-2 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-slate-500 ${currentPage === 1 ? 'opacity-50 pointer-events-none' : ''}`;
+      prevBtn.innerHTML = `<i class="fa-solid fa-angle-left text-xs"></i>`;
+      prevBtn.onclick = () => { if (currentPage > 1) { currentPage--; renderTable(); } };
+      paginationControls.appendChild(prevBtn);
+
+      // Page numbers
+      for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+          const pageBtn = document.createElement('button');
+          pageBtn.className = `px-3 py-1.5 border text-xs font-semibold rounded-lg transition-colors ${currentPage === i ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`;
+          pageBtn.textContent = i;
+          pageBtn.onclick = () => { currentPage = i; renderTable(); };
+          paginationControls.appendChild(pageBtn);
+        } else if (i === currentPage - 2 || i === currentPage + 2) {
+          const dots = document.createElement('span');
+          dots.className = "px-1.5 text-slate-400 text-xs";
+          dots.textContent = '...';
+          paginationControls.appendChild(dots);
+        }
+      }
+
+      // Next Button
+      const nextBtn = document.createElement('button');
+      nextBtn.className = `px-2 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-slate-500 ${currentPage === totalPages ? 'opacity-50 pointer-events-none' : ''}`;
+      nextBtn.innerHTML = `<i class="fa-solid fa-angle-right text-xs"></i>`;
+      nextBtn.onclick = () => { if (currentPage < totalPages) { currentPage++; renderTable(); } };
+      paginationControls.appendChild(nextBtn);
+    }
+
+    // Delete Task API Call
+    async function deleteTask(taskId, filename) {
+      if (!confirm(`Are you sure you want to delete task "${filename}"? This will permanently delete the GCS image, pipeline results, and thumbnails.`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('Failed to delete task');
+
+        showToast(`Task for "${filename}" deleted successfully.`);
+        fetchTasks();
+      } catch (e) {
+        console.error(e);
+        showToast('Failed to delete task.', 'error');
+      }
+    }
+
+    // Render Status Badges
+    function getStatusBadge(status) {
+      const base = "px-2 py-1 rounded-full text-xs font-bold inline-flex items-center space-x-1";
+      switch(status) {
+        case 'PENDING':
+          return `<span class="${base} bg-slate-100 text-slate-600"><i class="fa-regular fa-clock text-[10px]"></i> <span>Pending</span></span>`;
+        case 'QUEUED':
+          return `<span class="${base} bg-blue-50 text-blue-600"><i class="fa-solid fa-list-ol text-[10px]"></i> <span>Queued</span></span>`;
+        case 'RUNNING':
+          return `<span class="${base} bg-amber-50 text-amber-600"><i class="fa-solid fa-gear fa-spin text-[10px]"></i> <span>Running</span></span>`;
+        case 'COMPLETED':
+          return `<span class="${base} bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[10px]"></i> <span>Completed</span></span>`;
+        case 'FAILED':
+          return `<span class="${base} bg-rose-50 text-rose-600"><i class="fa-solid fa-circle-xmark text-[10px]"></i> <span>Failed</span></span>`;
+        default:
+          return `<span class="${base} bg-slate-100 text-slate-600"><span>${status}</span></span>`;
+      }
+    }
+
+    function getStatusPlaceholderIcon(status) {
+      switch (status) {
+        case 'QUEUED': return 'fa-solid fa-list-ol';
+        case 'RUNNING': return 'fa-solid fa-gear fa-spin';
+        case 'FAILED': return 'fa-solid fa-circle-xmark text-rose-500';
+        default: return 'fa-regular fa-image';
+      }
+    }
+
+    // Modal Details Logic
+    function showDetails(task) {
+      modalFilename.textContent = task.filename;
+      modalTaskId.textContent = task.taskId;
+      modalUploaded.textContent = formatDate(task.uploadedAt);
+      
+      const details = task.resultDetails;
+      
+      // Update dimensions and format
+      if (task.status === 'COMPLETED' && details) {
+        modalDimensions.textContent = `${details.width} x ${details.height}`;
+        modalFormat.textContent = details.format;
+      } else {
+        modalDimensions.textContent = task.status === 'FAILED' ? 'Failed' : 'Pending';
+        modalFormat.textContent = task.status === 'FAILED' ? 'Failed' : 'Pending';
+      }
+
+      // Load Image Preview
+      modalPreviewImage.classList.add('hidden');
+      modalPreviewPlaceholder.classList.remove('hidden');
+      modalDownloadImage.classList.add('hidden');
+
+      if (task.status === 'FAILED') {
+        modalPreviewPlaceholder.innerHTML = `
+          <i class="fa-solid fa-circle-xmark text-rose-500 text-4xl mb-2"></i>
+          <span class="text-xs font-semibold text-rose-600">Processing failed</span>
+        `;
+      } else if (task.status === 'COMPLETED' && task.imageSignedUrl) {
+        modalPreviewImage.src = task.imageSignedUrl;
+        modalPreviewImage.onload = () => {
+          modalPreviewImage.classList.remove('hidden');
+          modalPreviewPlaceholder.classList.add('hidden');
+          modalDownloadImage.href = task.imageSignedUrl;
+          modalDownloadImage.classList.remove('hidden');
+        };
+      } else {
+        // PENDING, QUEUED, RUNNING
+        modalPreviewPlaceholder.innerHTML = `
+          <i class="fa-solid fa-gears fa-spin text-indigo-500 text-4xl mb-2"></i>
+          <span class="text-xs font-semibold text-indigo-600">${task.status === 'RUNNING' ? 'Processing image...' : 'In Queue...'}</span>
+        `;
+      }
+
+      // Render Timeline
+      renderTimeline(task);
+
+      // Render JSON block
+      modalJson.textContent = JSON.stringify(task.resultDetails || { message: "No result JSON generated yet.", status: task.status }, null, 2);
+
+      // Show Modal
+      detailsModal.classList.remove('hidden');
+    }
+
+    function hideModal() {
+      detailsModal.classList.add('hidden');
+    }
+
+    // Render Status Timeline
+    function renderTimeline(task) {
+      modalTimeline.innerHTML = '';
+      const details = task.resultDetails;
+
+      const steps = [];
+      
+      // Step 1: Uploaded (always true)
+      steps.push({
+        name: 'Uploaded',
+        desc: 'Image uploaded to input/ prefix',
+        time: task.uploadedAt,
+        active: true,
+        icon: 'fa-solid fa-cloud-arrow-up'
+      });
+
+      // Step 2: Queued
+      steps.push({
+        name: 'Queued',
+        desc: 'Pub/Sub event triggered, Cloud Task created',
+        time: details?.queuedAt || (task.status !== 'PENDING' ? task.uploadedAt : null),
+        active: task.status !== 'PENDING',
+        icon: 'fa-solid fa-list-ol'
+      });
+
+      // Step 3: Running
+      steps.push({
+        name: 'Processing',
+        desc: 'Go task handler processes image bytes',
+        time: details?.status === 'RUNNING' || details?.status === 'COMPLETED' || details?.status === 'FAILED' ? details.updatedAt : null,
+        active: task.status === 'RUNNING' || task.status === 'COMPLETED' || task.status === 'FAILED',
+        icon: 'fa-solid fa-gear'
+      });
+
+      // Step 4: Finished (Completed or Failed)
+      if (task.status === 'FAILED') {
+        steps.push({
+          name: 'Failed',
+          desc: details?.error || 'Unknown error occurred in pipeline',
+          time: details?.updatedAt || null,
+          active: true,
+          failed: true,
+          icon: 'fa-solid fa-circle-xmark'
+        });
+      } else {
+        steps.push({
+          name: 'Finished',
+          desc: 'Thumbnail generated & saved to thumbs/',
+          time: task.status === 'COMPLETED' ? details?.updatedAt : null,
+          active: task.status === 'COMPLETED',
+          icon: 'fa-solid fa-circle-check'
+        });
+      }
+
+      // Render Timeline HTML
+      steps.forEach((step, idx) => {
+        const item = document.createElement('div');
+        item.className = "relative pl-6";
+        
+        // timeline vertical line connector
+        let lineHtml = '';
+        if (idx < steps.length - 1) {
+          lineHtml = `<div class="absolute left-[9px] top-5 bottom-[-21px] w-[2px] ${step.active && steps[idx+1].active ? 'bg-indigo-500' : 'bg-slate-200'}"></div>`;
+        }
+
+        // timeline node circle
+        let circleClass = '';
+        if (step.failed) {
+          circleClass = 'bg-rose-50 border-rose-500 text-rose-500';
+        } else if (step.active) {
+          circleClass = 'bg-indigo-50 border-indigo-500 text-indigo-600';
+        } else {
+          circleClass = 'bg-white border-slate-200 text-slate-300';
+        }
+
+        item.innerHTML = `
+          ${lineHtml}
+          <span class="absolute left-0 top-0.5 w-5 h-5 rounded-full border-2 ${circleClass} flex items-center justify-center text-[10px]">
+            <i class="${step.icon}"></i>
+          </span>
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="font-bold ${step.failed ? 'text-rose-600' : (step.active ? 'text-slate-800' : 'text-slate-400')}">${step.name}</span>
+              <span class="text-[10px] text-slate-400">${step.time ? formatDate(step.time) : ''}</span>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-0.5">${step.desc}</p>
+          </div>
+        `;
+        modalTimeline.appendChild(item);
+      });
+    }
+
+    // Copy JSON Helper
+    function copyModalJson() {
+      navigator.clipboard.writeText(modalJson.textContent)
+        .then(() => showToast('JSON copied to clipboard!'))
+        .catch(() => showToast('Failed to copy JSON', 'error'));
+    }
+
+    // Format Helpers
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      return d.toLocaleString();
+    }
+
+    function formatBytes(bytes, decimals = 2) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const dm = decimals < 0 ? 0 : decimals;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+  </script>
+</body>
+</html>
