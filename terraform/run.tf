@@ -23,9 +23,10 @@ resource "google_service_account" "taskapi" {
 
 
 resource "google_cloud_run_v2_service" "taskapi" {
-  project  = module.service_project.project_id
-  name     = "taskapi-${random_id.random_suffix.hex}"
-  location = var.region
+  project             = module.service_project.project_id
+  name                = "taskapi"
+  location            = var.region
+  deletion_protection = false
 
   template {
     containers {
@@ -73,6 +74,12 @@ resource "google_cloud_run_v2_service" "taskapi" {
     service_account = google_service_account.taskapi.email
   }
 
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+      template[0].containers[0].env,
+    ]
+  }
 }
 
 // Cloud Run SA for task handler (handles tasks)
@@ -91,9 +98,10 @@ resource "google_cloud_run_v2_service_iam_member" "tasks_invoker" {
 }
 
 resource "google_cloud_run_v2_service" "taskhandler" {
-  project  = module.service_project.project_id
-  name     = "taskhandler-${random_id.random_suffix.hex}"
-  location = var.region
+  project             = module.service_project.project_id
+  name                = "taskhandler"
+  location            = var.region
+  deletion_protection = false
 
   template {
     containers {
@@ -105,4 +113,10 @@ resource "google_cloud_run_v2_service" "taskhandler" {
     service_account = google_service_account.taskhandler_sa.email
   }
 
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+      template[0].containers[0].env,
+    ]
+  }
 }

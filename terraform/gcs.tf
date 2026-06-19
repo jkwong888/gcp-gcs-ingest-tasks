@@ -37,10 +37,10 @@ resource "google_pubsub_topic_iam_binding" "binding" {
   members = ["serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"]
 }
 
-// allow taskapi to create objects on gcs
-resource "google_storage_bucket_iam_member" "taskapi_write_gcs" {
+# Allow taskapi to manage objects on GCS (read, write, and delete for cleanup)
+resource "google_storage_bucket_iam_member" "taskapi_object_admin" {
   bucket = google_storage_bucket.data.name
-  role = "roles/storage.objectCreator"
+  role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.taskapi.email}"
 }
 

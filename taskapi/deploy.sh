@@ -12,7 +12,7 @@ set -euo pipefail
 # ==============================================================================
 # PLEASE UPDATE THESE VARIABLES FOR YOUR GCP ENVIRONMENT
 # ==============================================================================
-PROJECT_ID="your-gcp-project-id"
+PROJECT_ID="jkwng-cloud-tasks-dev-51c5"
 REGION="us-central1"
 REGISTRY_PROJECT_ID="jkwng-images"
 
@@ -21,9 +21,9 @@ SERVICE_NAME="taskapi"
 SERVICE_ACCOUNT="taskapi@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Task API Environment Variables
-BUCKET_NAME="your-gcs-bucket-name"
+BUCKET_NAME="jkwng-data-51c5"
 BUCKET_PREFIX="input"
-QUEUE_NAME="work-queue"
+QUEUE_NAME="work-queue-51c5"
 TASKS_SERVICE_ACCOUNT_EMAIL="cloud-tasks@${PROJECT_ID}.iam.gserviceaccount.com"
 STORAGE_SERVICE_ACCOUNT_EMAIL="storage@${PROJECT_ID}.iam.gserviceaccount.com"
 
