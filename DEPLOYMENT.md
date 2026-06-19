@@ -16,7 +16,7 @@ Before running the deployment scripts, ensure you have:
     gcloud auth application-default login
     ```
 2.  **A Google Cloud Project** with the following APIs enabled:
-    -   Artifact Registry (`artifactregistry.googleapis.com`)
+    -   Google Container Registry (GCR)
     -   Cloud Build (`cloudbuild.googleapis.com`)
     -   Cloud Run (`run.googleapis.com`)
     -   Cloud Tasks (`cloudtasks.googleapis.com`)
@@ -55,8 +55,8 @@ Because the Task API depends on the URL of the Task Handler, **you must deploy t
 1.  Open [taskhandler/deploy.sh](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler/deploy.sh) and update the configuration variables at the top:
     ```bash
     PROJECT_ID="your-gcp-project-id"       # <-- Your GCP Project ID
-    REGION="us-central1"                   # <-- Target region
-    AR_REPO_NAME="tasks-repo"              # <-- Artifact Registry repository name
+    REGION="us-central1"                   # <-- Target region (services deployed here)
+    REGISTRY_PROJECT_ID="jkwng-images"     # <-- GCP Project containing the GCR registry
     ```
 2.  Run the deployment script from the `taskhandler/` directory:
     ```bash
@@ -66,8 +66,7 @@ Because the Task API depends on the URL of the Task Handler, **you must deploy t
     ```
 
 **What it does:**
--   Creates the Artifact Registry repository if missing.
--   Submits Go source code to Google Cloud Build.
+-   Submits Go source code to Google Cloud Build (built and pushed to `gcr.io/${REGISTRY_PROJECT_ID}/taskhandler`).
 -   Packages it into a minimal distroless image.
 -   Deploys to Cloud Run as a private service (`--no-allow-unauthenticated`) running on port `8090`.
 -   Prints the newly created private Service URL.
@@ -82,7 +81,7 @@ Once the Task Handler is successfully deployed, you can deploy the Task API. The
     ```bash
     PROJECT_ID="your-gcp-project-id"       # <-- Your GCP Project ID
     REGION="us-central1"                   # <-- Target region
-    AR_REPO_NAME="tasks-repo"              # <-- Artifact Registry repository name
+    REGISTRY_PROJECT_ID="jkwng-images"     # <-- GCP Project containing the GCR registry
 
     # Task API Environment Variables
     BUCKET_NAME="your-gcs-bucket-name"     # <-- GCS Bucket Name (from Step 1)
@@ -103,7 +102,7 @@ Once the Task Handler is successfully deployed, you can deploy the Task API. The
 
 **What it does:**
 -   Queries Cloud Run to resolve the URL for `taskhandler` in your project and region.
--   Submits TypeScript source code to Google Cloud Build.
+-   Submits TypeScript source code to Google Cloud Build (built and pushed to `gcr.io/${REGISTRY_PROJECT_ID}/taskapi`).
 -   Runs TypeScript compilation and Jest tests inside the build container to verify code health before packaging.
 -   Deploys to Cloud Run as a public service (`--allow-unauthenticated`) running on port `8000`.
 -   Injects all correct environment variables, including the detected `TASK_HANDLER_URL`.

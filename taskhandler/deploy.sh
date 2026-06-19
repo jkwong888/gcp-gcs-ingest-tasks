@@ -11,9 +11,9 @@ set -euo pipefail
 # ==============================================================================
 # PLEASE UPDATE THESE VARIABLES FOR YOUR GCP ENVIRONMENT
 # ==============================================================================
-PROJECT_ID="your-gcp-project-id"
+PROJECT_ID="jkwng-cloud-tasks-dev-51c5"
 REGION="us-central1"
-AR_REPO_NAME="tasks-repo"
+REGISTRY_PROJECT_ID="jkwng-images"
 
 # Service Settings
 SERVICE_NAME="taskhandler"
@@ -78,24 +78,8 @@ if [ "$PROJECT_ID" == "your-gcp-project-id" ]; then
     exit 1
 fi
 
-# ==============================================================================
-# 3. SETUP ARTIFACT REGISTRY
-# ==============================================================================
-log_info "Verifying Artifact Registry repository: $AR_REPO_NAME in $REGION..."
-if ! gcloud artifacts repositories describe "$AR_REPO_NAME" --location="$REGION" &>/dev/null; then
-    log_info "Repository $AR_REPO_NAME not found. Creating..."
-    gcloud artifacts repositories create "$AR_REPO_NAME" \
-        --repository-format=docker \
-        --location="$REGION" \
-        --description="Docker repository for tasks services" \
-        --quiet
-    log_info "Repository created successfully."
-else
-    log_info "Repository $AR_REPO_NAME already exists."
-fi
-
-# Docker image tag
-IMAGE_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_NAME}/${SERVICE_NAME}:latest"
+# Docker image tag (using pre-existing GCR repository in the registry project)
+IMAGE_TAG="gcr.io/${REGISTRY_PROJECT_ID}/${SERVICE_NAME}:latest"
 
 # ==============================================================================
 # 4. BUILD & DEPLOY TO CLOUD RUN
