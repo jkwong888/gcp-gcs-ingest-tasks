@@ -35,6 +35,7 @@ variable "service_project_apis_to_enable" {
     "cloudtasks.googleapis.com",
     "storage.googleapis.com",
     "iam.googleapis.com",
+    "cloudbuild.googleapis.com",
   ]
 }
 

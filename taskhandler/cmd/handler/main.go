@@ -134,7 +134,7 @@ func (h *TaskHandler) handleB64(w http.ResponseWriter, t TaskStruct) {
 
 	// In Go, image/png must be registered, we do it via side-effect import.
 	// We imported _ "image/png" via side-effect import in Go or just use png.Decode.
-	img, err := image.Decode(reader)
+	img, _, err := image.Decode(reader)
 	if err != nil {
 		h.log.Sugar().Errorf("error decoding image: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
