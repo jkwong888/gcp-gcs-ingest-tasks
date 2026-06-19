@@ -66,22 +66,7 @@ if ! command -v gcloud &> /dev/null; then
     exit 1
 fi
 
-# Check if project is configured
-CURRENT_PROJECT=$(gcloud config get-value project 2>/dev/null || true)
-if [ -z "$CURRENT_PROJECT" ]; then
-    log_warn "No default project set in gcloud. Setting to: $PROJECT_ID"
-    gcloud config set project "$PROJECT_ID"
-elif [ "$CURRENT_PROJECT" != "$PROJECT_ID" ]; then
-    log_warn "Current gcloud project ($CURRENT_PROJECT) does not match configured PROJECT_ID ($PROJECT_ID)."
-    read -p "Do you want to switch gcloud project to $PROJECT_ID? (y/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        gcloud config set project "$PROJECT_ID"
-    else
-        log_error "Project mismatch. Exiting."
-        exit 1
-    fi
-fi
+# Project checks removed since we explicitly pass --project to all commands
 
 # Check if placeholders are still present
 if [ "$PROJECT_ID" == "your-gcp-project-id" ] || [ "$BUCKET_NAME" == "your-gcs-bucket-name" ]; then
@@ -123,10 +108,11 @@ log_info "========================================="
 
 log_info "Submitting Cloud Build for Task API..."
 # We run Cloud Build from the directory of the script (which is taskapi/)
-gcloud builds submit --tag "$IMAGE_TAG" .
+gcloud builds submit --project="$PROJECT_ID" --tag "$IMAGE_TAG" .
 
 log_info "Deploying Task API to Cloud Run (Public)..."
 gcloud run deploy "$SERVICE_NAME" \
+    --project="$PROJECT_ID" \
     --image="$IMAGE_TAG" \
     --region="$REGION" \
     --port=8000 \
@@ -136,7 +122,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --quiet
 
 # Retrieve the Task API URL
-SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" --region="$REGION" --format='value(status.url)')
+SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)')
 
 log_info "========================================="
 log_info "TASK API DEPLOYMENT COMPLETE!"
