@@ -407,13 +407,40 @@
       }, 3000);
     }
 
-    // Auto Refresh
+    // Smart Polling State & Helpers
+    let currentPollingIntervalMs = 30000; // Default to slow poll (30s)
+
+    function hasActiveTasks() {
+      return allTasks.some(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'PENDING');
+    }
+
     function startAutoRefresh() {
       if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+      
+      const active = hasActiveTasks();
+      const newIntervalMs = active ? 5000 : 30000;
+      currentPollingIntervalMs = newIntervalMs;
+      
       autoRefreshInterval = setInterval(() => {
-        fetchTasks(true); // silent fetch (no UI block)
-      }, 5000);
+        fetchTasks(true); // silent fetch
+      }, newIntervalMs);
     }
+
+    function stopAutoRefresh() {
+      if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+      }
+    }
+
+    // Pause polling when tab is inactive, resume when active
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopAutoRefresh();
+      } else {
+        fetchTasks(true); // Fetch immediately on return
+      }
+    });
 
     // File Selection
     function handleFileSelect() {
@@ -503,6 +530,15 @@
         
         updateStats();
         applyFiltersAndRender();
+
+        // Dynamically adjust polling speed based on active tasks
+        if (!document.hidden) {
+          const active = hasActiveTasks();
+          const expectedIntervalMs = active ? 5000 : 30000;
+          if (currentPollingIntervalMs !== expectedIntervalMs || !autoRefreshInterval) {
+            startAutoRefresh();
+          }
+        }
       } catch (e) {
         console.error(e);
         if (!silent) showToast('Failed to fetch tasks', 'error');
