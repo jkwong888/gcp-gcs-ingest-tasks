@@ -160,12 +160,13 @@ def test_gcs_path_success(mock_gcs):
     mock_blob.download_as_text.side_effect = mock_download_as_text
     mock_blob.upload_from_string.side_effect = mock_upload_from_string
 
+    headers = {"X-CloudTasks-TaskName": "task-gcs-123"}
     with TestClient(app) as client:
         payload = {
             "gcsPath": "gs://my-bucket/inputs/photo.png",
             "jobId": "job-gcs-123"
         }
-        response = client.post("/", json=payload)
+        response = client.post("/", json=payload, headers=headers)
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 
@@ -225,12 +226,13 @@ def test_gcs_path_retry_history(mock_gcs):
     mock_blob.download_as_text.side_effect = mock_download_as_text
     mock_blob.upload_from_string.side_effect = mock_upload_from_string
 
+    headers = {"X-CloudTasks-TaskName": "task-gcs-retry"}
     with TestClient(app) as client:
         payload = {
             "gcsPath": "gs://my-bucket/inputs/photo.png",
             "jobId": "job-gcs-retry"
         }
-        response = client.post("/", json=payload)
+        response = client.post("/", json=payload, headers=headers)
         assert response.status_code == 200
 
         upload_calls = mock_blob.upload_from_string.call_args_list
@@ -337,12 +339,13 @@ def test_gcs_path_file_not_found(mock_gcs):
     mock_blob.download_as_text.side_effect = mock_download_as_text
     mock_blob.upload_from_string.side_effect = mock_upload_from_string
 
+    headers = {"X-CloudTasks-TaskName": "task-gcs-missing"}
     with TestClient(app) as client:
         payload = {
             "gcsPath": "gs://my-bucket/missing.png",
             "jobId": "job-missing"
         }
-        response = client.post("/", json=payload)
+        response = client.post("/", json=payload, headers=headers)
         assert response.status_code == 400
         assert "Failed to load input image" in response.json()["detail"]
 

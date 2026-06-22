@@ -216,7 +216,7 @@ def record_task_status(
     Writes to GCS if gcs_path is a GCS URI (gs://...), and writes to local disk if is_local_debug is True.
     Hides all bucket parsing and GCS write checks from the calling router.
     """
-    if gcs_path and gcs_path.startswith("gs://"):
+    if gcs_path and gcs_path.startswith("gs://") and not is_local_debug:
         if not client:
             raise ValueError("GCS client is required when gcs_path is a GCS URI")
         

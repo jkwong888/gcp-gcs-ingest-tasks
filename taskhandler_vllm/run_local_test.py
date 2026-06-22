@@ -92,5 +92,19 @@ def main():
     except Exception as e:
         print(f"\n[ERROR] Unexpected error: {e}")
 
+    # Attempt to read and print the local task status log from disk
+    local_status_path = f"local_runs/{args.job_id}.json"
+    if os.path.exists(local_status_path):
+        print(f"\n======================================================================")
+        print(f"Local Task Status Log found at: {local_status_path}")
+        print(f"======================================================================")
+        try:
+            with open(local_status_path, "r") as f:
+                status_data = json.load(f)
+            print(json.dumps(status_data, indent=2))
+            print(f"======================================================================")
+        except Exception as se:
+            print(f"Failed to read local task status log: {se}")
+
 if __name__ == "__main__":
     main()
