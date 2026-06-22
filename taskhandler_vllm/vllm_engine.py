@@ -7,7 +7,7 @@ from PIL import Image
 # If they are missing or if CUDA drivers are misconfigured, the app will fail fast on startup.
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
-from vllm.sampling_params import SamplingParams, GuidedDecodingParams
+from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from huggingface_hub import snapshot_download
 
 logger = logging.getLogger("taskhandler_vllm.vllm_engine")
@@ -86,11 +86,11 @@ async def run_vllm_inference_internal(
     """
     Submits a request to the vLLM engine with guided decoding schema constraint.
     """
-    guided_decoding = GuidedDecodingParams(json=schema)
+    structured_outputs = StructuredOutputsParams(json=schema)
     sampling_params = SamplingParams(
         temperature=0.0, # Deterministic JSON output
         max_tokens=1024,
-        guided_decoding=guided_decoding
+        structured_outputs=structured_outputs
     )
     
     results_generator = engine.generate(

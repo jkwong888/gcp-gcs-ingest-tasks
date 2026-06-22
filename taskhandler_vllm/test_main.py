@@ -17,7 +17,7 @@ class MockAsyncEngineArgs:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-class MockGuidedDecodingParams:
+class MockStructuredOutputsParams:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -34,7 +34,7 @@ mock_vllm_engine_async_llm_engine = MagicMock()
 mock_vllm_sampling_params = MagicMock()
 
 mock_vllm_engine_arg_utils.AsyncEngineArgs = MockAsyncEngineArgs
-mock_vllm_sampling_params.GuidedDecodingParams = MockGuidedDecodingParams
+mock_vllm_sampling_params.StructuredOutputsParams = MockStructuredOutputsParams
 mock_vllm_sampling_params.SamplingParams = MockSamplingParams
 
 # Setup mock engine instance
