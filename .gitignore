@@ -40,3 +40,6 @@ __pycache__/
 venv/
 env/
 .env
+
+# Local debug run outputs
+local_runs/

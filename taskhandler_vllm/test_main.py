@@ -372,3 +372,43 @@ def test_startup_fails_without_model_path():
         # Restore environment variable
         if old_model_path:
             os.environ["MODEL_PATH"] = old_model_path
+
+def test_handle_b64_writes_local_status(mock_gcs):
+    import shutil
+    
+    # Ensure local_runs directory is clean before test
+    if os.path.exists("local_runs"):
+        shutil.rmtree("local_runs")
+        
+    with TestClient(app) as client:
+        dummy_png = get_dummy_image_bytes("PNG")
+        b64_data = base64.b64encode(dummy_png).decode("utf-8")
+        job_id = "job-local-debug-123"
+
+        payload = {
+            "b64input": b64_data,
+            "jobId": job_id
+        }
+        
+        # Call the endpoint WITHOUT Cloud Tasks headers!
+        response = client.post("/", json=payload)
+        assert response.status_code == 200
+        
+        # Verify a local file local_runs/{job_id}.json was created on disk!
+        local_file_path = f"local_runs/{job_id}.json"
+        assert os.path.exists(local_file_path)
+        
+        with open(local_file_path, "r") as f:
+            local_data = json.load(f)
+            
+        assert local_data["jobId"] == job_id
+        assert local_data["status"] == "COMPLETED"
+        assert len(local_data["attempts"]) == 1
+        assert local_data["attempts"][0]["status"] == "COMPLETED"
+        assert local_data["attempts"][0]["isLocalDebug"] is True
+        assert local_data["attempts"][0]["result"]["width"] == 10
+        assert local_data["attempts"][0]["result"]["llm_analysis"]["caption"] == "A beautiful sunset over the lake"
+
+    # Cleanup the created local_runs folder
+    if os.path.exists("local_runs"):
+        shutil.rmtree("local_runs")

@@ -15,7 +15,7 @@ from google.cloud import storage
 
 # Import modular components
 from constants import ImageMetadataAnalysis, PROMPT_TEMPLATE
-from gcs_utils import parse_bucket_path, write_status
+from gcs_utils import parse_bucket_path, write_status, write_local_status
 from vllm_engine import init_vllm_engine
 from pipeline import run_pipeline
 
@@ -140,6 +140,8 @@ async def handle_task(request: Request, task: TaskStruct):
     if cloud_tasks_meta:
         logger.info(f"Detected Cloud Tasks Metadata headers: {cloud_tasks_meta}")
 
+    is_local_debug = not bool(cloud_tasks_meta)
+
     # 1. Update task status to RUNNING (if GCS). Logs attempt started & Cloud Tasks ID.
     if bucket_name:
         logger.info(f"Updating task status to RUNNING for jobId: {task.job_id}")
@@ -158,6 +160,19 @@ async def handle_task(request: Request, task: TaskStruct):
         except Exception as e:
             logger.error(f"Failed to write RUNNING status to GCS: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to write RUNNING status: {e}")
+
+    if is_local_debug:
+        try:
+            write_local_status(
+                job_id=task.job_id,
+                status="RUNNING",
+                extra={
+                    "gcsPath": task.path,
+                    "thumbnailPath": thumbnail_path
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to write local RUNNING status: {e}")
 
     # Simulate processing delay if requested
     if handle_input_sleep_sec > 0:
@@ -194,6 +209,19 @@ async def handle_task(request: Request, task: TaskStruct):
                 )
             except Exception as we:
                 logger.error(f"Failed to write FAILED status to GCS: {we}")
+        if is_local_debug:
+            try:
+                write_local_status(
+                    job_id=task.job_id,
+                    status="FAILED",
+                    error_msg=error_msg,
+                    extra={
+                        "gcsPath": task.path,
+                        "thumbnailPath": thumbnail_path
+                    }
+                )
+            except Exception as we:
+                logger.error(f"Failed to write local FAILED status: {we}")
         raise HTTPException(status_code=400, detail=error_msg)
 
     # 3. Execute the multi-step pipeline (Image props + LLM guided inference)
@@ -223,6 +251,19 @@ async def handle_task(request: Request, task: TaskStruct):
                 )
             except Exception as we:
                 logger.error(f"Failed to write FAILED status to GCS: {we}")
+        if is_local_debug:
+            try:
+                write_local_status(
+                    job_id=task.job_id,
+                    status="FAILED",
+                    error_msg=error_msg,
+                    extra={
+                        "gcsPath": task.path,
+                        "thumbnailPath": thumbnail_path
+                    }
+                )
+            except Exception as we:
+                logger.error(f"Failed to write local FAILED status: {we}")
         raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         error_msg = f"Pipeline execution failed: {e}"
@@ -241,6 +282,19 @@ async def handle_task(request: Request, task: TaskStruct):
                 )
             except Exception as we:
                 logger.error(f"Failed to write FAILED status to GCS: {we}")
+        if is_local_debug:
+            try:
+                write_local_status(
+                    job_id=task.job_id,
+                    status="FAILED",
+                    error_msg=error_msg,
+                    extra={
+                        "gcsPath": task.path,
+                        "thumbnailPath": thumbnail_path
+                    }
+                )
+            except Exception as we:
+                logger.error(f"Failed to write local FAILED status: {we}")
         raise HTTPException(status_code=500, detail=error_msg)
 
     # 4. Write COMPLETED status to GCS
@@ -265,6 +319,24 @@ async def handle_task(request: Request, task: TaskStruct):
         except Exception as e:
             logger.error(f"Failed to write COMPLETED status to GCS: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to write COMPLETED status: {e}")
+
+    if is_local_debug:
+        try:
+            result_payload = {
+                "gcsPath": task.path,
+                "width": pipeline_result["width"],
+                "height": pipeline_result["height"],
+                "format": pipeline_result["format"],
+                "thumbnailPath": thumbnail_path,
+                "llm_analysis": pipeline_result["llm_analysis"]
+            }
+            write_local_status(
+                job_id=task.job_id,
+                status="COMPLETED",
+                extra=result_payload
+            )
+        except Exception as e:
+            logger.error(f"Failed to write local COMPLETED status: {e}")
 
     return {"status": "ok", "result": pipeline_result}
 
