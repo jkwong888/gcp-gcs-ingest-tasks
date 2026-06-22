@@ -16,7 +16,8 @@ REGION="us-central1"
 REGISTRY_PROJECT_ID="jkwng-images"
 
 # Service Settings
-SERVICE_NAME="taskhandler-vllm"
+SERVICE_NAME="taskhandler"
+IMAGE_NAME="taskhandler-vllm"
 SERVICE_ACCOUNT="taskhandler@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Task Handler Environment Variables
@@ -68,7 +69,7 @@ if [ "$PROJECT_ID" == "your-gcp-project-id" ]; then
 fi
 
 # Docker image tag (using pre-existing GCR repository in the registry project)
-IMAGE_TAG="gcr.io/${REGISTRY_PROJECT_ID}/${SERVICE_NAME}:latest"
+IMAGE_TAG="gcr.io/${REGISTRY_PROJECT_ID}/${IMAGE_NAME}:latest"
 
 # ==============================================================================
 # 3. BUILD & DEPLOY TO CLOUD RUN (WITH GPU)
@@ -99,6 +100,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --memory=16Gi \
     --no-cpu-throttling \
     --cpu-boost \
+    --concurrency=4 \
     --timeout=600 \
     --set-env-vars="MODEL_PATH=${MODEL_PATH}" \
     --quiet
