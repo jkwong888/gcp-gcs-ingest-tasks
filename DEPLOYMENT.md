@@ -1,6 +1,6 @@
 # Cloud Run Deployment Guide
 
-This guide explains how to deploy the **Task API** (Node.js/TypeScript) and the **Task Handler** (Go) to separate Google Cloud Run services.
+This guide explains how to deploy the **Task API** (Node.js/TypeScript) and the **Task Handler** (Python) to separate Google Cloud Run services.
 
 Instead of a single monolithic script, we provide **two separate, self-contained deployment scripts** located in their respective directories. This allows you to manage, build, and deploy each service independently.
 
@@ -66,10 +66,37 @@ Because the Task API depends on the URL of the Task Handler, **you must deploy t
     ```
 
 **What it does:**
--   Submits Go source code to Google Cloud Build (built and pushed to `gcr.io/${REGISTRY_PROJECT_ID}/taskhandler`).
--   Packages it into a minimal distroless image.
+-   Submits Python source code to Google Cloud Build (built and pushed to `gcr.io/${REGISTRY_PROJECT_ID}/taskhandler`).
+-   Packages it into a Python slim image.
 -   Deploys to Cloud Run as a private service (`--no-allow-unauthenticated`) running on port `8090`.
 -   Prints the newly created private Service URL.
+
+---
+
+### Step 2b: Alternative - Deploy the GPU-accelerated vLLM Task Handler
+
+If you want to use a real Vision-Language Model (VLM) or Large Language Model (LLM) to process the ingested files instead of a simulated sleep delay, you can deploy the GPU-accelerated vLLM task handler.
+
+1.  Open [taskhandler_vllm/deploy.sh](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler_vllm/deploy.sh) and update the configuration variables:
+    ```bash
+    PROJECT_ID="your-gcp-project-id"       # <-- Your GCP Project ID
+    REGION="us-central1"                   # <-- Target region (must support L4 GPUs, e.g. us-central1)
+    REGISTRY_PROJECT_ID="jkwng-images"     # <-- GCP Project containing the GCR registry
+    MODEL_PATH="google/paligemma-3b-pt-448"# <-- HuggingFace VLM or LLM model ID
+    ```
+2.  Run the deployment script from the `taskhandler_vllm/` directory:
+    ```bash
+    cd taskhandler_vllm
+    ./deploy.sh
+    cd ..
+    ```
+
+**What it does:**
+-   Submits Python source code to Google Cloud Build (built and pushed to `gcr.io/${REGISTRY_PROJECT_ID}/taskhandler-vllm`).
+-   Packages it using the official `vllm/vllm-openai:v0.23.0` base image.
+-   Deploys to Cloud Run with **1 NVIDIA L4 GPU**, **4 CPUs**, **16Gi memory**, and **no CPU throttling**.
+-   Initializes the vLLM engine inside the FastAPI lifespan. The service will block and **not respond to health checks** until the model is fully loaded into GPU memory, ensuring zero traffic is sent to uninitialized instances.
+-   Prints the newly created private Service URL (to be used in Step 3 as `TASKHANDLER_SERVICE_NAME="taskhandler-vllm"`).
 
 ---
 

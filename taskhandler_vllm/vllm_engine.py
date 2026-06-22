@@ -1,0 +1,144 @@
+import os
+import time
+import logging
+from typing import Any, Optional
+from PIL import Image
+
+logger = logging.getLogger("taskhandler_vllm.vllm_engine")
+
+# Dynamic import setup to facilitate local testing on CPU
+try:
+    from vllm.engine.arg_utils import AsyncEngineArgs
+    from vllm.engine.async_llm_engine import AsyncLLMEngine
+    from vllm.sampling_params import SamplingParams
+    from vllm.sampling_params import GuidedDecodingParams
+    VLLM_AVAILABLE = True
+except ImportError:
+    logger.warning("vLLM packages not available. This is expected if running unit tests on CPU.")
+    VLLM_AVAILABLE = False
+
+try:
+    from huggingface_hub import snapshot_download
+    HF_HUB_AVAILABLE = True
+except ImportError:
+    logger.warning("huggingface_hub not available. This is expected if running unit tests on CPU.")
+    HF_HUB_AVAILABLE = False
+
+
+def resolve_model_path(model_path: str) -> str:
+    """
+    Checks if model weights exist locally. If not (and it's not a GCS URI), 
+    attempts to download them directly from Hugging Face Hub before engine startup.
+    """
+    if model_path.startswith("gs://"):
+        return model_path
+
+    if not os.path.exists(model_path) and model_path != "mock-model":
+        if HF_HUB_AVAILABLE:
+            logger.info(f"Model path '{model_path}' not found locally. Triggering explicit Hugging Face Hub download...")
+            try:
+                downloaded_dir = snapshot_download(repo_id=model_path)
+                logger.info(f"Model successfully downloaded from Hugging Face Hub to: {downloaded_dir}")
+                return downloaded_dir
+            except Exception as e:
+                logger.error(f"Failed to download model '{model_path}' from Hugging Face Hub: {e}")
+                raise e
+        else:
+            logger.warning(f"Model path '{model_path}' not found locally, and Hugging Face downloader is unavailable.")
+    
+    return model_path
+
+
+def init_vllm_engine(
+    model_path: str,
+    tensor_parallel_size: int = 1,
+    pipeline_parallel_size: int = 1,
+    gpu_memory_utilization: float = 0.90,
+    max_model_len: Optional[int] = None,
+    dtype: str = "auto",
+    trust_remote_code: bool = False
+) -> Any:
+    """
+    Initializes the vLLM AsyncLLMEngine. Resolves paths and GCS streamers.
+    Blocks the thread until the model is fully loaded into GPU memory.
+    """
+    # 1. Resolve local/HF model path
+    resolved_path = resolve_model_path(model_path)
+    
+    # 2. Determine load format (GCS Streamer vs Standard Auto)
+    if resolved_path.startswith("gs://"):
+        logger.info(f"MODEL_PATH is a GCS URI ({resolved_path}). Enabling Run:ai Model Streamer.")
+        load_format = "runai_streamer"
+    else:
+        logger.info(f"MODEL_PATH is a local path ({resolved_path}). Using standard 'auto' load format.")
+        load_format = "auto"
+
+    # 3. Initialize AsyncLLMEngine
+    if VLLM_AVAILABLE:
+        logger.info("Initializing vLLM AsyncLLMEngine...")
+        engine_args = AsyncEngineArgs(
+            model=resolved_path,
+            load_format=load_format,
+            tensor_parallel_size=tensor_parallel_size,
+            pipeline_parallel_size=pipeline_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            trust_remote_code=trust_remote_code,
+        )
+        engine = AsyncLLMEngine.from_engine_args(engine_args)
+        logger.info("vLLM AsyncLLMEngine initialized successfully.")
+        return engine
+    else:
+        logger.warning("vLLM is not available, returning mock-engine.")
+        return "mock-engine"
+
+
+async def run_vllm_inference_internal(
+    engine: Any,
+    prompt: str,
+    schema: dict,
+    image: Image.Image,
+    request_id: str
+) -> dict:
+    """
+    Submits a request to the vLLM engine with guided decoding schema constraint.
+    """
+    if not VLLM_AVAILABLE or engine == "mock-engine":
+        logger.info("Using mock engine output for run_vllm_inference_internal...")
+        time.sleep(0.5)
+        return {
+            "caption": "A mock description of the image",
+            "tags": ["mock", "test"],
+            "primary_color": "blue"
+        }
+        
+    guided_decoding = GuidedDecodingParams(json=schema)
+    sampling_params = SamplingParams(
+        temperature=0.0, # Deterministic JSON output
+        max_tokens=1024,
+        guided_decoding=guided_decoding
+    )
+    
+    results_generator = engine.generate(
+        prompt=prompt,
+        sampling_params=sampling_params,
+        request_id=request_id,
+        multi_modal_data={"image": image}
+    )
+    
+    final_output = None
+    async for request_output in results_generator:
+        final_output = request_output
+        
+    if final_output and final_output.outputs:
+        generated_text = final_output.outputs[0].text
+        logger.info(f"Model generated text: {generated_text}")
+        try:
+            import json
+            return json.loads(generated_text)
+        except json.JSONDecodeError as je:
+            logger.error(f"Failed to parse generated text as JSON: {je}. Text: {generated_text}")
+            raise ValueError(f"Model did not return valid JSON: {je}")
+    else:
+        raise ValueError("No output received from vLLM engine")

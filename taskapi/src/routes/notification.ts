@@ -107,6 +107,8 @@ export async function notificationRoutes(fastify: FastifyInstance) {
         req.log.error(`Failed to generate or upload thumbnail: ${error}`);
       }
 
+      const queuedAt = new Date().toISOString();
+
       // 2. Write the initial "QUEUED" status JSON to GCS results folder (containing thumbnail path)
       try {
         const statusFile = bucket.file(`results/${jobId}.json`);
@@ -115,7 +117,7 @@ export async function notificationRoutes(fastify: FastifyInstance) {
           gcsPath: gcsLocation,
           status: 'QUEUED',
           thumbnailPath: thumbnailPath,
-          queuedAt: new Date().toISOString(),
+          queuedAt: queuedAt,
         };
         await statusFile.save(JSON.stringify(statusData), {
           contentType: 'application/json',
@@ -148,6 +150,7 @@ export async function notificationRoutes(fastify: FastifyInstance) {
             status: 'FAILED',
             thumbnailPath: thumbnailPath,
             error: `Failed to enqueue cloud task: ${error}`,
+            queuedAt: queuedAt,
             failedAt: new Date().toISOString(),
           };
           await statusFile.save(JSON.stringify(failedStatus), { contentType: 'application/json' });

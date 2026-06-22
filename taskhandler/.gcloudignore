@@ -1,0 +1,23 @@
+# This file specifies files to ignore when uploading to Cloud Build.
+# It helps prevent uploading large local virtual environments and caches.
+
+.gcloudignore
+.git/
+.gitignore
+
+# Ignore python cache
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+.pytest_cache/
+
+# Ignore local environments (avoids uploading megabytes of dependencies)
+.venv/
+venv/
+env/
+.env
+
+# Ignore tests, docs, and local scripts
+test_main.py
+README.md
+deploy.sh
