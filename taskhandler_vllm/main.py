@@ -7,14 +7,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field, ConfigDict
-from PIL import UnidentifiedImageError
-from google.cloud import storage
 
 # Import modular components
-from constants import ImageMetadataAnalysis, PROMPT_TEMPLATE
+from model import TaskRequest, ImageMetadataAnalysis
+from constants import PROMPT_TEMPLATE
 from task import load_image_bytes, record_task_status
 from vllm_engine import init_vllm_engine
+from gcs_utils import init_storage_client
 from pipeline import run_pipeline
 
 # Configure logging
@@ -30,9 +29,6 @@ logger = logging.getLogger("taskhandler_vllm.main")
 init_sleep_sec = int(os.environ.get("INIT_SLEEP_SEC", "0"))
 handle_input_sleep_sec = int(os.environ.get("HANDLE_INPUT_SLEEP_SEC", "0"))
 
-# Engine instance placeholder
-engine = None
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -40,8 +36,6 @@ async def lifespan(app: FastAPI):
     Instantiates the global storage.Client once to reuse across all requests.
     If MODEL_PATH is missing or GPU/CUDA drivers are unavailable, it fails fast on startup.
     """
-    global engine
-
     # Verify model path is provided at runtime
     model_path = os.environ.get("MODEL_PATH")
     if not model_path:
@@ -51,18 +45,17 @@ async def lifespan(app: FastAPI):
     app.state.prompt_template = PROMPT_TEMPLATE
     app.state.json_schema = ImageMetadataAnalysis.model_json_schema()
 
-    # Instantiate global GCS Client once at startup to avoid per-request latency
-    logger.info("Initializing global Google Cloud Storage Client...")
-    app.state.gcs_client = storage.Client()
+    # Initialize global GCS Client once at startup to avoid per-request latency
+    init_storage_client()
 
     # Simulate slow initialization if configured
     if init_sleep_sec > 0:
         logger.info(f"Simulating slow initialization: sleeping {init_sleep_sec}s...")
         time.sleep(init_sleep_sec)
 
-    # Initialize strictly on GPU
-    logger.info(f"Initializing AsyncLLMEngine for model: {model_path}")
-    engine = init_vllm_engine(
+    # Initialize vLLM engine and AutoProcessor strictly on GPU
+    logger.info(f"Initializing vLLM Engine and Processor for model: {model_path}")
+    init_vllm_engine(
         model_path=model_path,
         tensor_parallel_size=int(os.environ.get("TENSOR_PARALLEL_SIZE", "1")),
         pipeline_parallel_size=int(os.environ.get("PIPELINE_PARALLEL_SIZE", "1")),
@@ -80,12 +73,6 @@ app = FastAPI(lifespan=lifespan)
 # ------------------------------------------------------------------------------
 # API Router Interfaces
 # ------------------------------------------------------------------------------
-class TaskRequest(BaseModel):
-    path: Optional[str] = Field(None, alias="gcsPath")
-    b64input: Optional[str] = None
-    job_id: str = Field(..., alias="jobId")
-
-    model_config = ConfigDict(populate_by_name=True)
 
 @app.get("/health", response_class=PlainTextResponse)
 def health_check():
@@ -100,9 +87,6 @@ async def handle_task(task: TaskRequest, request: Request):
     Retrieves the global GCS client, records statuses, and runs the ingestion pipeline.
     """
     logger.info(f"Received ingestion task: {task.job_id}")
-
-    # Retrieve global GCS Client
-    client = request.app.state.gcs_client
 
     # Extract Cloud Tasks metadata headers
     cloud_tasks_meta = {}
@@ -122,7 +106,6 @@ async def handle_task(task: TaskRequest, request: Request):
     logger.info(f"Updating task status to RUNNING for jobId: {task.job_id}")
     try:
         record_task_status(
-            client=client,
             job_id=task.job_id,
             status="RUNNING",
             gcs_path=task.path,
@@ -140,7 +123,7 @@ async def handle_task(task: TaskRequest, request: Request):
 
     # 2. Load the image bytes (Generic loader handles GCS, local files, and base64!)
     try:
-        image_bytes = load_image_bytes(task.path, task.b64input, client)
+        image_bytes = load_image_bytes(task.path, task.b64input)
     except Exception as e:
         error_msg = f"Failed to load input image: {e}"
         logger.error(error_msg)
@@ -148,7 +131,6 @@ async def handle_task(task: TaskRequest, request: Request):
         
         # Log failure status
         record_task_status(
-            client=client,
             job_id=task.job_id,
             status="FAILED",
             gcs_path=task.path,
@@ -161,16 +143,14 @@ async def handle_task(task: TaskRequest, request: Request):
     try:
         request_id = f"job-{task.job_id}-{time.time()}"
         pipeline_result = await run_pipeline(
-            engine=engine,
             prompt=request.app.state.prompt_template,
             schema=request.app.state.json_schema,
             image_bytes=image_bytes,
             request_id=request_id
         )
-    except (UnidentifiedImageError, ValueError) as e:
+    except ValueError as e:
         error_msg = f"Failed to decode or process image: {e}"
         record_task_status(
-            client=client,
             job_id=task.job_id,
             status="FAILED",
             gcs_path=task.path,
@@ -181,7 +161,6 @@ async def handle_task(task: TaskRequest, request: Request):
     except Exception as e:
         error_msg = f"Pipeline execution failed: {e}"
         record_task_status(
-            client=client,
             job_id=task.job_id,
             status="FAILED",
             gcs_path=task.path,
@@ -194,7 +173,6 @@ async def handle_task(task: TaskRequest, request: Request):
     logger.info(f"Task COMPLETED for jobId: {task.job_id}")
     try:
         record_task_status(
-            client=client,
             job_id=task.job_id,
             status="COMPLETED",
             gcs_path=task.path,

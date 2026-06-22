@@ -63,6 +63,19 @@ mock_hf_hub = MagicMock()
 mock_hf_hub.snapshot_download.return_value = "/local/cache/path/to/model"
 sys.modules['huggingface_hub'] = mock_hf_hub
 
+# Mock transformers AutoProcessor
+mock_transformers = MagicMock()
+mock_processor = MagicMock()
+mock_transformers.AutoProcessor.from_pretrained.return_value = mock_processor
+
+# Mock apply_chat_template to return a dummy prompt string containing <image> placeholder
+def mock_apply_chat_template(messages, tokenize=False, add_generation_prompt=True):
+    # Standard VLM prompt format with <image> before text
+    return "<image>\nExtract structured metadata from this image. Output a JSON object..."
+
+mock_processor.apply_chat_template.side_effect = mock_apply_chat_template
+sys.modules['transformers'] = mock_transformers
+
 # ==============================================================================
 # 2. TEST ENVIRONMENT CONFIGURATION
 # ==============================================================================
@@ -81,7 +94,7 @@ def get_dummy_image_bytes(img_format="PNG", size=(10, 10)):
 
 @pytest.fixture
 def mock_gcs():
-    with patch("main.storage.Client") as mock_client_cls:
+    with patch("gcs_utils.storage.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         

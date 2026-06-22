@@ -4,7 +4,6 @@ import base64
 import datetime
 import logging
 from typing import Optional
-from google.cloud import storage
 
 # Import generic GCS helpers from infrastructure layer
 from gcs_utils import read_json_from_gcs, write_json_to_gcs, read_bytes_from_gcs
@@ -13,8 +12,7 @@ logger = logging.getLogger("taskhandler_vllm.task")
 
 def load_image_bytes(
     path: Optional[str],
-    b64input: Optional[str],
-    client: storage.Client
+    b64input: Optional[str]
 ) -> bytes:
     """
     Generic task input loader. Resolves and loads raw image bytes from 
@@ -30,7 +28,7 @@ def load_image_bytes(
             logger.info(f"Downloading image from GCS path: {path} ...")
             from gcs_utils import parse_bucket_path
             bucket_name, object_path = parse_bucket_path(path)
-            return read_bytes_from_gcs(client, bucket_name, object_path)
+            return read_bytes_from_gcs(bucket_name, object_path)
         else:
             logger.info(f"Loading image from local file path: {path} ...")
             with open(path, "rb") as f:
@@ -128,7 +126,6 @@ def update_task_status_data(
     return data
 
 def write_status(
-    client: storage.Client, 
     bucket_name: str, 
     job_id: str, 
     status: str, 
@@ -146,7 +143,7 @@ def write_status(
     object_path = f"results/{job_id}.json"
     
     # 1. Read existing JSON (or start fresh if not found)
-    data = read_json_from_gcs(client, bucket_name, object_path)
+    data = read_json_from_gcs(bucket_name, object_path)
     
     # 2. Transition state machine
     updated_data = update_task_status_data(
@@ -160,7 +157,7 @@ def write_status(
     )
     
     # 3. Write back to GCS using generic helpers
-    write_json_to_gcs(client, bucket_name, object_path, updated_data)
+    write_json_to_gcs(bucket_name, object_path, updated_data)
 
 def write_local_status(
     job_id: str,
@@ -202,7 +199,6 @@ def write_local_status(
     logger.info(f"Wrote local debug status to {local_path}")
 
 def record_task_status(
-    client: Optional[storage.Client],
     job_id: str,
     status: str,
     gcs_path: Optional[str] = None,
@@ -217,15 +213,11 @@ def record_task_status(
     Hides all bucket parsing and GCS write checks from the calling router.
     """
     if gcs_path and gcs_path.startswith("gs://") and not is_local_debug:
-        if not client:
-            raise ValueError("GCS client is required when gcs_path is a GCS URI")
-        
         from gcs_utils import parse_bucket_path
         bucket_name, _ = parse_bucket_path(gcs_path)
         
         # Let exceptions bubble up here so that caller can handle crucial GCS failures
         write_status(
-            client=client,
             bucket_name=bucket_name,
             job_id=job_id,
             status=status,

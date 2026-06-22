@@ -12,7 +12,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --system --no-dev --no-cache --inexact
 
 # Copy all modular application code
-COPY main.py constants.py gcs_utils.py vllm_engine.py pipeline.py task.py ./
+COPY main.py constants.py gcs_utils.py vllm_engine.py pipeline.py task.py model.py ./
 
 # Expose the same port as the original task handler
 EXPOSE 8090

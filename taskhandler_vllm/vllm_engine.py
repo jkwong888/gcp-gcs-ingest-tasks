@@ -9,30 +9,36 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from huggingface_hub import snapshot_download
+from transformers import AutoProcessor
 
 logger = logging.getLogger("taskhandler_vllm.vllm_engine")
 
+# Module-level singletons for engine and processor
+_engine: Optional[AsyncLLMEngine] = None
+_processor: Optional[Any] = None
 
 def resolve_model_path(model_path: str) -> str:
     """
     Checks if model weights exist locally. If not (and it's not a GCS URI), 
     attempts to download them directly from Hugging Face Hub before engine startup.
     """
-    if model_path.startswith("gs://"):
+    if os.path.exists(model_path):
+        logger.info(f"Using local model path: {model_path}")
         return model_path
-
-    if not os.path.exists(model_path):
-        logger.info(f"Model path '{model_path}' not found locally. Triggering explicit Hugging Face Hub download...")
-        try:
-            downloaded_dir = snapshot_download(repo_id=model_path)
-            logger.info(f"Model successfully downloaded from Hugging Face Hub to: {downloaded_dir}")
-            return downloaded_dir
-        except Exception as e:
-            logger.error(f"Failed to download model '{model_path}' from Hugging Face Hub: {e}")
-            raise e
-    
-    return model_path
-
+        
+    if model_path.startswith("gs://"):
+        logger.info(f"Model path '{model_path}' is a GCS URI. Will load dynamically via streaming.")
+        return model_path
+        
+    # Attempt HF Hub download (vLLM will consume the returned cache dir)
+    logger.info(f"Model path '{model_path}' not found locally. Downloading from Hugging Face Hub...")
+    try:
+        local_dir = snapshot_download(repo_id=model_path)
+        logger.info(f"Model downloaded successfully to Hugging Face cache: {local_dir}")
+        return local_dir
+    except Exception as e:
+        logger.error(f"Failed to download model '{model_path}' from HF Hub: {e}")
+        raise RuntimeError(f"Failed to resolve model path: {model_path}") from e
 
 def init_vllm_engine(
     model_path: str,
@@ -42,12 +48,16 @@ def init_vllm_engine(
     max_model_len: Optional[int] = None,
     dtype: str = "auto",
     trust_remote_code: bool = False
-) -> AsyncLLMEngine:
+) -> None:
     """
-    Initializes the vLLM AsyncLLMEngine. Resolves paths and GCS streamers.
+    Initializes the vLLM AsyncLLMEngine and AutoProcessor as module-level singletons.
     Blocks the thread until the model is fully loaded into GPU memory.
     If no GPU is present or CUDA is misconfigured, this will crash the application.
     """
+    global _engine, _processor
+    if _engine is not None or _processor is not None:
+        logger.warning("vLLM Engine/Processor already initialized. Re-initializing.")
+        
     # 1. Resolve local/HF model path
     resolved_path = resolve_model_path(model_path)
     
@@ -71,13 +81,15 @@ def init_vllm_engine(
         dtype=dtype,
         trust_remote_code=trust_remote_code,
     )
-    engine = AsyncLLMEngine.from_engine_args(engine_args)
-    logger.info("vLLM AsyncLLMEngine initialized successfully.")
-    return engine
-
+    _engine = AsyncLLMEngine.from_engine_args(engine_args)
+    
+    # 4. Initialize AutoProcessor
+    logger.info(f"Loading AutoProcessor for model: {resolved_path}...")
+    _processor = AutoProcessor.from_pretrained(resolved_path)
+    
+    logger.info("vLLM AsyncLLMEngine and AutoProcessor initialized successfully.")
 
 async def run_vllm_inference_internal(
-    engine: AsyncLLMEngine,
     prompt: str,
     schema: dict,
     image: Image.Image,
@@ -86,6 +98,13 @@ async def run_vllm_inference_internal(
     """
     Submits a request to the vLLM engine with guided decoding schema constraint.
     """
+    global _engine, _processor
+    if _engine is None or _processor is None:
+        raise RuntimeError(
+            "vLLM engine and processor are not initialized. "
+            "Please call init_vllm_engine() at application startup."
+        )
+        
     structured_outputs = StructuredOutputsParams(json=schema)
     sampling_params = SamplingParams(
         temperature=0.0, # Deterministic JSON output
@@ -93,12 +112,32 @@ async def run_vllm_inference_internal(
         structured_outputs=structured_outputs
     )
     
+    # Prepare chat messages for the vision-language model, putting the image BEFORE the text
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": prompt}
+            ]
+        }
+    ]
+    
+    # Use the model's official processor to apply its chat template.
+    # This automatically positions the image tokens correctly and injects all special tokens.
+    formatted_prompt = _processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    logger.info(f"Applied chat template. Formatted prompt length: {len(formatted_prompt)}")
+    
     inputs = {
-        "prompt": prompt,
+        "prompt": formatted_prompt,
         "multi_modal_data": {"image": image}
     }
     
-    results_generator = engine.generate(
+    results_generator = _engine.generate(
         inputs,
         sampling_params=sampling_params,
         request_id=request_id

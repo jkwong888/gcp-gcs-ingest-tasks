@@ -2,7 +2,7 @@ import io
 import logging
 import traceback
 from typing import Any, Optional
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from vllm_engine import run_vllm_inference_internal
 
 logger = logging.getLogger("taskhandler_vllm.pipeline")
@@ -18,7 +18,6 @@ def extract_image_properties(image: Image.Image) -> dict:
     }
 
 async def run_pipeline(
-    engine: Any,
     prompt: str,
     schema: dict,
     image_bytes: bytes,
@@ -34,15 +33,19 @@ async def run_pipeline(
     try:
         # Step 1: Decode image and extract metadata properties
         logger.info("Pipeline Step 1: Decoding image and extracting properties...")
-        image = Image.open(io.BytesIO(image_bytes))
-        image.load()  # Force load image bytes to verify decodability
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+            image.load()  # Force load image bytes to verify decodability
+        except UnidentifiedImageError as uie:
+            logger.error(f"Image decoding failed: {uie}")
+            raise ValueError(f"Invalid or corrupt image format: {uie}") from uie
+            
         img_props = extract_image_properties(image)
         logger.info(f"Extracted properties successfully: {img_props}")
         
         # Step 2: Invoke the model for structural analysis
         logger.info("Pipeline Step 2: Executing vLLM structured generation...")
         llm_analysis = await run_vllm_inference_internal(
-            engine=engine,
             prompt=prompt,
             schema=schema,
             image=image,
