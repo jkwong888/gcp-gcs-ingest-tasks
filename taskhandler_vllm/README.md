@@ -97,6 +97,12 @@ uv run python main.py
 ```
 This spins up the server in your local virtual environment without needing to activate it manually.
 
+*Note: If you are running on a GPU machine and want to run the real vLLM engine locally on your host (outside Docker), you must manually install `vllm` in your virtual environment:*
+```bash
+uv pip install vllm
+```
+Otherwise, the application will safely fall back to the mock engine.
+
 ### 3. Run Unit Tests
 To run the mocked unit test suite on CPU, run:
 ```bash
@@ -110,7 +116,8 @@ uv run pytest -v
 The **[Dockerfile](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler_vllm/Dockerfile)** leverages the unified `uv.lock` file to guarantee identical builds:
 
 - It copies the high-performance `uv` binary directly from the official `ghcr.io/astral-sh/uv` multi-stage build image.
-- It copies `pyproject.toml` and `uv.lock` and executes `uv sync --system --no-dev --no-cache` to sync the exact locked dependency tree.
+- It copies `pyproject.toml` and `uv.lock` and executes `uv sync --system --no-dev --no-cache --inexact` to sync the exact locked dependency tree.
+- The **`--inexact` flag is critical**: by default, `uv sync` performs an exact sync and prunes/deletes any packages in the environment that are not in our lockfile. The `--inexact` flag prevents `uv` from deleting the pre-installed `vllm`, PyTorch, and CUDA packages baked into the base image.
 - The `--system` flag is used because the base vLLM image has its GPU/CUDA dependencies installed globally in the system Python path. Installing our dependencies globally ensures they can seamlessly access the vLLM engine.
 - The `--no-dev` flag ensures that development tools like `pytest` are excluded from the production image.
 
