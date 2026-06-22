@@ -355,3 +355,20 @@ def test_gcs_path_file_not_found(mock_gcs):
         assert failed_data["attempts"][0]["status"] == "FAILED"
         assert "Object not found" in failed_data["attempts"][0]["error"]
         assert "Object not found" in failed_data["error"]
+
+def test_startup_fails_without_model_path():
+    # Remove MODEL_PATH from env temporarily
+    old_model_path = os.environ.get("MODEL_PATH")
+    if "MODEL_PATH" in os.environ:
+        del os.environ["MODEL_PATH"]
+        
+    try:
+        # FastAPI TestClient will trigger lifespan and raise the startup exception
+        with pytest.raises(ValueError) as exc_info:
+            with TestClient(app) as _:
+                pass
+        assert "MODEL_PATH environment variable is required" in str(exc_info.value)
+    finally:
+        # Restore environment variable
+        if old_model_path:
+            os.environ["MODEL_PATH"] = old_model_path

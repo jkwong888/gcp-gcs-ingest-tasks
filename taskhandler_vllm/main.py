@@ -61,12 +61,7 @@ async def lifespan(app: FastAPI):
     # 4. Resolve Model Path
     model_path = os.getenv("MODEL_PATH")
     if not model_path:
-        # In mock environments, we can proceed without a model path
-        import vllm_engine
-        if vllm_engine.VLLM_AVAILABLE:
-            raise ValueError("MODEL_PATH environment variable is required")
-        else:
-            model_path = "mock-model"
+        raise ValueError("MODEL_PATH environment variable is required")
 
     tensor_parallel_size = int(os.getenv("TENSOR_PARALLEL_SIZE", "1"))
     pipeline_parallel_size = int(os.getenv("PIPELINE_PARALLEL_SIZE", "1"))
