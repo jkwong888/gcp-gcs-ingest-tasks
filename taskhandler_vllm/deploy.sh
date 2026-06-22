@@ -24,13 +24,11 @@ INIT_SLEEP_SEC=0
 HANDLE_INPUT_SLEEP_SEC=0
 
 # vLLM Model Settings
-MODEL_PATH="google/paligemma-3b-pt-448" # Replace with your target HuggingFace VLM or LLM model
+MODEL_PATH="gs://jkwng-model-data/models/google/gemma-4-12B-it-qat-w4a16-ct" # Replace with your target HuggingFace VLM or LLM model
 TENSOR_PARALLEL_SIZE=1
 GPU_MEMORY_UTILIZATION=0.90
 TRUST_REMOTE_CODE="True"
 
-# Default Prompt Template and JSON Schema (optional to override here)
-PROMPT_TEMPLATE="USER: <image>\nExtract structured metadata from this image. Output a JSON object with keys 'caption', 'tags' (list of strings), and 'primary_color'.\nASSISTANT:"
 # ==============================================================================
 
 # Colors for output
@@ -100,7 +98,9 @@ gcloud run deploy "$SERVICE_NAME" \
     --cpu=4 \
     --memory=16Gi \
     --no-cpu-throttling \
-    --set-env-vars="INIT_SLEEP_SEC=${INIT_SLEEP_SEC},HANDLE_INPUT_SLEEP_SEC=${HANDLE_INPUT_SLEEP_SEC},MODEL_PATH=${MODEL_PATH},TENSOR_PARALLEL_SIZE=${TENSOR_PARALLEL_SIZE},GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION},TRUST_REMOTE_CODE=${TRUST_REMOTE_CODE},PROMPT_TEMPLATE=${PROMPT_TEMPLATE}" \
+    --cpu-boost \
+    --timeout=600 \
+    --set-env-vars="MODEL_PATH=${MODEL_PATH}" \
     --quiet
 
 # Retrieve the Task Handler URL
