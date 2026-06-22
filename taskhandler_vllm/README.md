@@ -17,11 +17,12 @@ This directory contains a GPU-accelerated alternative to the original `taskhandl
    - `result` (on success) or `error` message (on failure).
    - Top-level status fields are preserved for backwards compatibility.
 7. **Modular Split-File Architecture**: The codebase is cleanly split into specialized modules for single responsibility:
-   - `main.py`: Entry point, lifespan startup coordinator, and HTTP route handlers.
-   - `constants.py`: Holds the prompt template string and the Pydantic structured output model.
-   - `vllm_engine.py`: Manages model downloads, GCS weight streaming, and vLLM inference execution.
-   - `pipeline.py`: Coordinates image property extraction and model calls.
-   - `gcs_utils.py`: Manages GCS upload/download and attempt history array logs.
+    - `main.py`: Entry point, lifespan startup coordinator, and HTTP route handlers.
+    - `constants.py`: Holds the prompt template string and the Pydantic structured output model.
+    - `vllm_engine.py`: Manages model downloads, GCS weight streaming, and vLLM inference execution.
+    - `pipeline.py`: Coordinates image property extraction and model calls.
+    - `task.py`: Contains core task business logic: status state transitions and local disk logging.
+    - `gcs_utils.py`: Focuses strictly on GCS I/O wrappers (upload/download of task status JSONs).
 8. **Environment-Friendly Testing**: Includes a mock-based test suite that allows running 100% of unit tests in a lightweight CPU-only local environment without having to install `vllm` or its heavy CUDA/PyTorch dependencies.
 
 ---
