@@ -78,28 +78,27 @@ We have provided a smoke test script `run_local_test.py` that allows you to easi
 
 ---
 
-## Local Unit Testing (No GPU required)
+## Local Development & Testing (No GPU required)
 
-The unit tests are designed to run on lightweight CPU environments (laptops, CI/CD) by mocking out the `vllm` and `huggingface_hub` packages dynamically. 
+The codebase is initialized as a unified **`uv`** project (`pyproject.toml` & `uv.lock`) for a seamless, fast, and reproducible developer experience. You can run and test the application locally on CPU without a Docker container:
 
-We recommend using **`uv`** to manage your local environment for extremely fast package installations:
+### 1. Setup Local Environment
+To create a local virtual environment and install all dependencies (including testing tools like `pytest`), run:
+```bash
+cd taskhandler_vllm
+uv sync
+```
+This single command automatically creates a `.venv` directory (if not present) and synchronizes all locked dependencies.
 
-1. Navigate to the `taskhandler_vllm` directory:
-   ```bash
-   cd taskhandler_vllm
-   ```
-2. Create a virtual environment and install dependencies using `uv`:
-   ```bash
-   uv venv
-   source .venv/bin/activate
-   uv pip install -r requirements.txt
-   ```
-3. Run the tests using `pytest`:
-   ```bash
-   pytest -v
-   ```
+### 2. Run the Application Locally
+To start the FastAPI task handler locally (on port `8090`), run:
+```bash
+uv run python main.py
+```
+This spins up the server in your local virtual environment without needing to activate it manually.
 
-*Tip: With `uv`, you can also run the test suite in a single command without manually creating or activating a virtual environment:*
+### 3. Run Unit Tests
+To run the mocked unit test suite on CPU, run:
 ```bash
 uv run pytest -v
 ```
@@ -108,11 +107,12 @@ uv run pytest -v
 
 ## Docker Container & uv Integration
 
-The **[Dockerfile](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler_vllm/Dockerfile)** leverages `uv` to speed up the container build process:
+The **[Dockerfile](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler_vllm/Dockerfile)** leverages the unified `uv.lock` file to guarantee identical builds:
 
 - It copies the high-performance `uv` binary directly from the official `ghcr.io/astral-sh/uv` multi-stage build image.
-- It executes `uv pip install --system --no-cache-dir -r requirements.txt` to install our dependencies.
-- The `--system` flag is used because the base vLLM image has its GPU libraries (PyTorch/CUDA) installed globally in the system Python path. Installing our dependencies globally ensures they can seamlessly access the vLLM engine.
+- It copies `pyproject.toml` and `uv.lock` and executes `uv sync --system --no-dev --no-cache` to sync the exact locked dependency tree.
+- The `--system` flag is used because the base vLLM image has its GPU/CUDA dependencies installed globally in the system Python path. Installing our dependencies globally ensures they can seamlessly access the vLLM engine.
+- The `--no-dev` flag ensures that development tools like `pytest` are excluded from the production image.
 
 ---
 
