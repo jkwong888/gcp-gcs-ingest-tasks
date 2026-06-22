@@ -93,11 +93,15 @@ async def run_vllm_inference_internal(
         structured_outputs=structured_outputs
     )
     
+    inputs = {
+        "prompt": prompt,
+        "multi_modal_data": {"image": image}
+    }
+    
     results_generator = engine.generate(
-        prompt=prompt,
+        inputs,
         sampling_params=sampling_params,
-        request_id=request_id,
-        multi_modal_data={"image": image}
+        request_id=request_id
     )
     
     final_output = None

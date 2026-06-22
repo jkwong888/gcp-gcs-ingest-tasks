@@ -42,7 +42,7 @@ mock_engine_instance = MagicMock()
 mock_vllm_engine_async_llm_engine.AsyncLLMEngine.from_engine_args.return_value = mock_engine_instance
 
 # Mock the generate method to behave as an async generator
-async def mock_generate(prompt, sampling_params, request_id, multi_modal_data=None):
+async def mock_generate(inputs, sampling_params, request_id, **kwargs):
     mock_output = MagicMock()
     mock_seq_output = MagicMock()
     # Return a mock JSON string representing the output of the vision model
