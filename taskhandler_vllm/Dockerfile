@@ -9,7 +9,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # We use --system because vLLM and its GPU/CUDA dependencies are installed 
 # globally in the base image's Python environment. We use --no-dev to exclude pytest.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --system --no-dev --no-cache --inexact
+RUN uv sync --system --no-dev --no-cache --inexact --extra gpu
 
 # Copy all modular application code
 COPY main.py constants.py gcs_utils.py vllm_engine.py pipeline.py ./
