@@ -1,28 +1,16 @@
 import os
-import time
 import logging
 from typing import Any, Optional
 from PIL import Image
 
+# Import vLLM and HuggingFace strictly as top-level imports
+# If they are missing or if CUDA drivers are misconfigured, the app will fail fast on startup.
+from vllm.engine.arg_utils import AsyncEngineArgs
+from vllm.engine.async_llm_engine import AsyncLLMEngine
+from vllm.sampling_params import SamplingParams, GuidedDecodingParams
+from huggingface_hub import snapshot_download
+
 logger = logging.getLogger("taskhandler_vllm.vllm_engine")
-
-# Dynamic import setup to facilitate local testing on CPU
-try:
-    from vllm.engine.arg_utils import AsyncEngineArgs
-    from vllm.engine.async_llm_engine import AsyncLLMEngine
-    from vllm.sampling_params import SamplingParams
-    from vllm.sampling_params import GuidedDecodingParams
-    VLLM_AVAILABLE = True
-except ImportError:
-    logger.warning("vLLM packages not available. This is expected if running unit tests on CPU.")
-    VLLM_AVAILABLE = False
-
-try:
-    from huggingface_hub import snapshot_download
-    HF_HUB_AVAILABLE = True
-except ImportError:
-    logger.warning("huggingface_hub not available. This is expected if running unit tests on CPU.")
-    HF_HUB_AVAILABLE = False
 
 
 def resolve_model_path(model_path: str) -> str:
@@ -33,18 +21,15 @@ def resolve_model_path(model_path: str) -> str:
     if model_path.startswith("gs://"):
         return model_path
 
-    if not os.path.exists(model_path) and model_path != "mock-model":
-        if HF_HUB_AVAILABLE:
-            logger.info(f"Model path '{model_path}' not found locally. Triggering explicit Hugging Face Hub download...")
-            try:
-                downloaded_dir = snapshot_download(repo_id=model_path)
-                logger.info(f"Model successfully downloaded from Hugging Face Hub to: {downloaded_dir}")
-                return downloaded_dir
-            except Exception as e:
-                logger.error(f"Failed to download model '{model_path}' from Hugging Face Hub: {e}")
-                raise e
-        else:
-            logger.warning(f"Model path '{model_path}' not found locally, and Hugging Face downloader is unavailable.")
+    if not os.path.exists(model_path):
+        logger.info(f"Model path '{model_path}' not found locally. Triggering explicit Hugging Face Hub download...")
+        try:
+            downloaded_dir = snapshot_download(repo_id=model_path)
+            logger.info(f"Model successfully downloaded from Hugging Face Hub to: {downloaded_dir}")
+            return downloaded_dir
+        except Exception as e:
+            logger.error(f"Failed to download model '{model_path}' from Hugging Face Hub: {e}")
+            raise e
     
     return model_path
 
@@ -57,10 +42,11 @@ def init_vllm_engine(
     max_model_len: Optional[int] = None,
     dtype: str = "auto",
     trust_remote_code: bool = False
-) -> Any:
+) -> AsyncLLMEngine:
     """
     Initializes the vLLM AsyncLLMEngine. Resolves paths and GCS streamers.
     Blocks the thread until the model is fully loaded into GPU memory.
+    If no GPU is present or CUDA is misconfigured, this will crash the application.
     """
     # 1. Resolve local/HF model path
     resolved_path = resolve_model_path(model_path)
@@ -73,29 +59,25 @@ def init_vllm_engine(
         logger.info(f"MODEL_PATH is a local path ({resolved_path}). Using standard 'auto' load format.")
         load_format = "auto"
 
-    # 3. Initialize AsyncLLMEngine
-    if VLLM_AVAILABLE:
-        logger.info("Initializing vLLM AsyncLLMEngine...")
-        engine_args = AsyncEngineArgs(
-            model=resolved_path,
-            load_format=load_format,
-            tensor_parallel_size=tensor_parallel_size,
-            pipeline_parallel_size=pipeline_parallel_size,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            dtype=dtype,
-            trust_remote_code=trust_remote_code,
-        )
-        engine = AsyncLLMEngine.from_engine_args(engine_args)
-        logger.info("vLLM AsyncLLMEngine initialized successfully.")
-        return engine
-    else:
-        logger.warning("vLLM is not available, returning mock-engine.")
-        return "mock-engine"
+    # 3. Initialize AsyncLLMEngine (strictly, no fallback)
+    logger.info("Initializing vLLM AsyncLLMEngine...")
+    engine_args = AsyncEngineArgs(
+        model=resolved_path,
+        load_format=load_format,
+        tensor_parallel_size=tensor_parallel_size,
+        pipeline_parallel_size=pipeline_parallel_size,
+        gpu_memory_utilization=gpu_memory_utilization,
+        max_model_len=max_model_len,
+        dtype=dtype,
+        trust_remote_code=trust_remote_code,
+    )
+    engine = AsyncLLMEngine.from_engine_args(engine_args)
+    logger.info("vLLM AsyncLLMEngine initialized successfully.")
+    return engine
 
 
 async def run_vllm_inference_internal(
-    engine: Any,
+    engine: AsyncLLMEngine,
     prompt: str,
     schema: dict,
     image: Image.Image,
@@ -104,15 +86,6 @@ async def run_vllm_inference_internal(
     """
     Submits a request to the vLLM engine with guided decoding schema constraint.
     """
-    if not VLLM_AVAILABLE or engine == "mock-engine":
-        logger.info("Using mock engine output for run_vllm_inference_internal...")
-        time.sleep(0.5)
-        return {
-            "caption": "A mock description of the image",
-            "tags": ["mock", "test"],
-            "primary_color": "blue"
-        }
-        
     guided_decoding = GuidedDecodingParams(json=schema)
     sampling_params = SamplingParams(
         temperature=0.0, # Deterministic JSON output

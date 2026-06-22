@@ -12,10 +12,6 @@ dependencies = [
     "pillow>=10.2.0",
     "pydantic>=2.6.0",
     "uvicorn[standard]>=0.28.0",
-]
-
-[project.optional-dependencies]
-gpu = [
     "vllm>=0.23.0",
     "llmcompressor",
 ]

@@ -78,42 +78,37 @@ We have provided a smoke test script `run_local_test.py` that allows you to easi
 
 ---
 
-## Local Development & Testing (No GPU required)
+## Local Development & GPU Requirements
 
-The codebase is initialized as a unified **`uv`** project (`pyproject.toml` & `uv.lock`) for a seamless, fast, and reproducible developer experience. You can run and test the application locally on CPU without a Docker container:
+The codebase is initialized as a unified **`uv`** project (`pyproject.toml` & `uv.lock`) that strictly requires a GPU and CUDA environment for real execution.
 
 ### 1. Setup Local Environment
-To create a local virtual environment and install all dependencies (including testing tools like `pytest`), run:
+To create a local virtual environment and install all dependencies (including the heavy GPU stack: `vllm`, `llmcompressor`, `torch`, and dev tools like `pytest`), run:
 ```bash
 cd taskhandler_vllm
 uv sync
 ```
-This single command automatically creates a `.venv` directory (if not present) and synchronizes all locked dependencies.
+This single command automatically provisions a virtual environment and synchronizes the entire locked GPU-accelerated dependency tree.
 
 ### 2. Run the Application Locally
 To start the FastAPI task handler locally (on port `8090`), run:
 ```bash
 uv run python main.py
 ```
-This spins up the server in your local virtual environment without needing to activate it manually.
+*Note: Because this application is configured for strict, non-fallback GPU execution, **it requires a physical NVIDIA GPU and configured CUDA drivers on the host**. If no GPU is present or CUDA is misconfigured, the application will immediately crash and raise a CUDA initialization error on startup, preventing misconfigured services from accepting traffic.*
 
-*Note: If you are running on a GPU machine and want to run the real vLLM engine locally on your host (outside Docker), you must manually install `vllm` in your virtual environment:*
-```bash
-uv pip install vllm
-```
-Otherwise, the application will safely fall back to the mock engine.
-
-### 3. Run Unit Tests
-To run the mocked unit test suite on CPU, run:
+### 3. Run Unit Tests (On CPU)
+Even though the application requires a GPU for runtime execution, **you can still run 100% of the unit tests on a standard CPU-only machine** (like a laptop or CI/CD runner):
 ```bash
 uv run pytest -v
 ```
+The test suite dynamically mocks out `vllm` and its engine interfaces before booting FastAPI, allowing all test assertions to run instantly on CPU.
 
 ---
 
 ## Docker Container & uv Integration
 
-The **[Dockerfile](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler_vllm/Dockerfile)** leverages the unified `uv.lock` file to guarantee identical builds:
+The **[Dockerfile](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler_vllm/Dockerfile)** leverages the unified `uv.lock` file to guarantee identical, deterministic builds:
 
 - It copies the high-performance `uv` binary directly from the official `ghcr.io/astral-sh/uv` multi-stage build image.
 - It copies `pyproject.toml` and `uv.lock` and executes `uv sync --system --no-dev --no-cache --inexact` to sync the exact locked dependency tree.
