@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from google.api_core.exceptions import NotFound
 
 # Set env vars before importing main to avoid long startup sleep
 os.environ["INIT_SLEEP_SEC"] = "0"
@@ -116,18 +117,10 @@ def test_gcs_path_success(mock_gcs):
         assert response.json() == {"status": "ok"}
 
         # Verify GCS interactions
-        # 1. Bucket should be accessed with 'my-bucket'
         mock_gcs["client"].bucket.assert_called_with("my-bucket")
-        
-        # 2. Blob should be loaded with 'inputs/image.png'
         mock_gcs["bucket"].blob.assert_any_call("inputs/image.png")
-        
-        # 3. Status blob should be written to 'results/job-abc-123.json'
         mock_gcs["bucket"].blob.assert_any_call("results/job-abc-123.json")
         
-        # Verify status contents written by inspecting the final stored status
-        # Since we simulated GCS state, stored_status has the final COMPLETED state,
-        # but we also captured the upload calls to verify the intermediate states.
         upload_calls = mock_blob.upload_from_string.call_args_list
         assert len(upload_calls) == 2
 
@@ -139,6 +132,16 @@ def test_gcs_path_success(mock_gcs):
         assert running_data["thumbnailPath"] == "gs://my-bucket/thumbs/job-abc-123.png"
         assert running_data["queuedAt"] == "2026-06-19T22:00:00Z"  # Preserved
         assert "startedAt" in running_data  # Added
+        
+        # Verify attempt array structure
+        assert "attempts" in running_data
+        assert len(running_data["attempts"]) == 1
+        attempt = running_data["attempts"][0]
+        assert attempt["attemptNumber"] == 1
+        assert attempt["status"] == "RUNNING"
+        assert attempt["gcsPath"] == "gs://my-bucket/inputs/image.png"
+        assert attempt["thumbnailPath"] == "gs://my-bucket/thumbs/job-abc-123.png"
+        assert "startedAt" in attempt
 
         # Second upload: COMPLETED
         completed_data = json.loads(upload_calls[1].kwargs["data"])
@@ -149,15 +152,56 @@ def test_gcs_path_success(mock_gcs):
         assert completed_data["format"] == "png"
         assert completed_data["thumbnailPath"] == "gs://my-bucket/thumbs/job-abc-123.png"
         assert completed_data["queuedAt"] == "2026-06-19T22:00:00Z"  # Preserved
-        assert "startedAt" in completed_data  # Preserved from RUNNING state
+        assert "startedAt" in completed_data  # Preserved
         assert "completedAt" in completed_data  # Added
+
+        # Verify attempt completion
+        assert "attempts" in completed_data
+        assert len(completed_data["attempts"]) == 1
+        completed_attempt = completed_data["attempts"][0]
+        assert completed_attempt["attemptNumber"] == 1
+        assert completed_attempt["status"] == "COMPLETED"
+        assert "completedAt" in completed_attempt
+        assert completed_attempt["result"]["width"] == 100
+        assert completed_attempt["result"]["height"] == 200
+        assert completed_attempt["result"]["format"] == "png"
+
+def test_gcs_path_with_cloud_tasks_headers(mock_gcs):
+    mock_blob = mock_gcs["blob"]
+    mock_blob.reload.return_value = None
+    dummy_png = get_dummy_image_bytes("PNG")
+    mock_blob.download_as_bytes.return_value = dummy_png
+    
+    stored_status = {}
+    mock_blob.download_as_text.side_effect = lambda: json.dumps(stored_status)
+    mock_blob.upload_from_string.side_effect = lambda data, content_type=None: None
+    
+    with TestClient(app) as client:
+        payload = {
+            "gcsPath": "gs://my-bucket/inputs/image.png",
+            "jobId": "job-abc-123"
+        }
+        headers = {
+            "X-CloudTasks-TaskName": "task-abc",
+            "X-CloudTasks-TaskRetryCount": "2",
+            "X-CloudTasks-TaskExecutionCount": "1"
+        }
+        response = client.post("/", json=payload, headers=headers)
+        assert response.status_code == 200
+        
+        # Verify first upload (RUNNING) contains the Cloud Tasks headers in the attempt
+        upload_calls = mock_blob.upload_from_string.call_args_list
+        running_data = json.loads(upload_calls[0].kwargs["data"])
+        attempt = running_data["attempts"][0]
+        assert attempt["cloudTasksTaskName"] == "task-abc"
+        assert attempt["cloudTasksRetryCount"] == "2"
+        assert attempt["cloudTasksExecutionCount"] == "1"
 
 def test_gcs_path_missing_job_id():
     with patch("main.storage.Client"):
         with TestClient(app) as client:
             payload = {
                 "gcsPath": "gs://my-bucket/image.png"
-                # missing jobId
             }
             response = client.post("/", json=payload)
             assert response.status_code == 400
@@ -175,11 +219,22 @@ def test_gcs_path_invalid_gcs_uri():
             assert "invalid GCS location" in response.json()["detail"]
 
 def test_gcs_path_file_not_found(mock_gcs):
-    from google.api_core.exceptions import NotFound
-    
     # Mock blob.reload() to raise NotFound
     mock_blob = mock_gcs["blob"]
     mock_blob.reload.side_effect = NotFound("Object not found")
+
+    # Simulate GCS state to link GCS reads and writes
+    stored_status = {}
+
+    def mock_download_as_text():
+        return json.dumps(stored_status)
+
+    def mock_upload_from_string(data, content_type=None):
+        nonlocal stored_status
+        stored_status = json.loads(data)
+
+    mock_blob.download_as_text.side_effect = mock_download_as_text
+    mock_blob.upload_from_string.side_effect = mock_upload_from_string
 
     with TestClient(app) as client:
         payload = {
@@ -199,3 +254,10 @@ def test_gcs_path_file_not_found(mock_gcs):
         assert failed_data["jobId"] == "job-missing"
         assert failed_data["status"] == "FAILED"
         assert "Object not found" in failed_data["error"]
+        
+        # Verify attempt failure recording
+        assert "attempts" in failed_data
+        assert len(failed_data["attempts"]) == 1
+        failed_attempt = failed_data["attempts"][0]
+        assert failed_attempt["status"] == "FAILED"
+        assert "Object not found" in failed_attempt["error"]

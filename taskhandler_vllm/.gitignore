@@ -1,0 +1,17 @@
+# Ignore Python virtual environment
+.venv/
+venv/
+env/
+
+# Ignore Python compiled byte-code and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore testing caches
+.pytest_cache/
+
+# Ignore local debug runs and outputs
+local_runs/
+local_runs*.json

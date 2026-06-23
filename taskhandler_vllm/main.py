@@ -1,4 +1,9 @@
 import os
+# Force vLLM to spawn worker processes instead of forking, preventing CUDA re-initialization crashes.
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+# Enable CUDA Forward Compatibility to run newer CUDA compiled wheels on older host GPU drivers.
+os.environ["VLLM_ENABLE_CUDA_COMPATIBILITY"] = "1"
+
 import time
 import logging
 import traceback
@@ -22,6 +27,31 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("taskhandler_vllm.main")
+
+# Filter out high-frequency /health endpoint access logs to reduce noise in Cloud Logging
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        is_health = False
+        # Check if the log is a Uvicorn access log and the path is /health
+        # Uvicorn format: (client_addr, method, path, http_version, status_code)
+        if record.args and len(record.args) >= 3:
+            path = record.args[2]
+            if path == "/health":
+                is_health = True
+        # Fallback string check
+        elif "/health" in record.getMessage():
+            is_health = True
+
+        if is_health:
+            # Demote the log level to DEBUG so it is hidden under INFO log levels,
+            # but remains fully inspectable if log level is set to DEBUG.
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+
+        return True
+
+# Apply the filter to Uvicorn's access log channel
+logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 # ------------------------------------------------------------------------------
 # Config & Lifespan Setup

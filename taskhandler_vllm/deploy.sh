@@ -74,13 +74,25 @@ IMAGE_TAG="gcr.io/${REGISTRY_PROJECT_ID}/${IMAGE_NAME}:latest"
 # ==============================================================================
 # 3. BUILD & DEPLOY TO CLOUD RUN (WITH GPU)
 # ==============================================================================
+# Parse optional command-line flags
+SKIP_BUILD=false
+for arg in "$@"; do
+    if [ "$arg" == "--skip-build" ]; then
+        SKIP_BUILD=true
+    fi
+done
+
 log_info "========================================="
 log_info "Building and Deploying vLLM Task Handler..."
 log_info "========================================="
 
-log_info "Submitting Cloud Build for vLLM Task Handler..."
-# We run Cloud Build from the directory of the script (which is taskhandler_vllm/)
-gcloud builds submit --project="$PROJECT_ID" --tag "$IMAGE_TAG" .
+if [ "$SKIP_BUILD" = false ]; then
+    log_info "Submitting Cloud Build for vLLM Task Handler..."
+    # We run Cloud Build from the directory of the script (which is taskhandler_vllm/)
+    gcloud builds submit --project="$PROJECT_ID" --tag "$IMAGE_TAG" .
+else
+    log_warn "Skipping Cloud Build. Deploying with existing image: $IMAGE_TAG"
+fi
 
 log_info "Deploying vLLM Task Handler to Cloud Run with GPU (Private)..."
 # We deploy with:
@@ -96,12 +108,21 @@ gcloud run deploy "$SERVICE_NAME" \
     --service-account="$SERVICE_ACCOUNT" \
     --gpu=1 \
     --gpu-type=nvidia-l4 \
-    --cpu=4 \
-    --memory=16Gi \
+    --no-gpu-zonal-redundancy \
+    --min-instances=0 \
+    --max-instances=2 \
+    --update-annotations="run.googleapis.com/maxScale=2" \
+    --cpu=8 \
+    --memory=32Gi \
     --no-cpu-throttling \
     --cpu-boost \
     --concurrency=4 \
     --timeout=600 \
+    --network="task-vpc" \
+    --subnet="task-subnet" \
+    --vpc-egress="all-traffic" \
+    --startup-probe="httpGet.path=/health,initialDelaySeconds=120,periodSeconds=10,timeoutSeconds=10,failureThreshold=60" \
+    --liveness-probe="httpGet.path=/health,initialDelaySeconds=0,periodSeconds=15,timeoutSeconds=3,failureThreshold=3" \
     --set-env-vars="MODEL_PATH=${MODEL_PATH}" \
     --quiet
 

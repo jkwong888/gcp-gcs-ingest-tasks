@@ -10,6 +10,7 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from huggingface_hub import snapshot_download
 from transformers import AutoProcessor
+from gcs_utils import download_model_config_from_gcs
 
 logger = logging.getLogger("taskhandler_vllm.vllm_engine")
 
@@ -80,12 +81,26 @@ def init_vllm_engine(
         max_model_len=max_model_len,
         dtype=dtype,
         trust_remote_code=trust_remote_code,
+        # Bypass the extremely slow 80-second torch.compile JIT phase for instant serverless cold starts
+        enforce_eager=os.environ.get("VLLM_ENFORCE_EAGER", "true").lower() == "true",
+        # Maximize GCS read throughput with 32 parallel download threads during weight streaming
+        model_loader_extra_config='{"concurrency": 32}' if load_format == "runai_streamer" else None,
     )
     _engine = AsyncLLMEngine.from_engine_args(engine_args)
     
     # 4. Initialize AutoProcessor
-    logger.info(f"Loading AutoProcessor for model: {resolved_path}...")
-    _processor = AutoProcessor.from_pretrained(resolved_path)
+    if model_path.startswith("gs://"):
+        # For GCS paths, download only the small configuration/tokenizer files locally,
+        # since HuggingFace AutoProcessor does not support direct gs:// URIs.
+        local_config_dir = "/tmp/model_config"
+        logger.info(f"Model is GCS path. Downloading configuration files to: {local_config_dir}...")
+        download_model_config_from_gcs(model_path, local_config_dir)
+        processor_load_path = local_config_dir
+    else:
+        processor_load_path = resolved_path
+
+    logger.info(f"Loading AutoProcessor from: {processor_load_path}...")
+    _processor = AutoProcessor.from_pretrained(processor_load_path)
     
     logger.info("vLLM AsyncLLMEngine and AutoProcessor initialized successfully.")
 

@@ -1,13 +1,13 @@
 # Task Handler Service (Python FastAPI)
 
-This service is a Python-based rewrite of the original Go task handler. It accepts task payloads, simulates processing delays, and integrates with Google Cloud Storage (GCS) to update job statuses and extract image metadata.
+This service is a Python FastAPI application. It accepts task payloads, simulates processing delays, and integrates with Google Cloud Storage (GCS) to update job statuses and extract image metadata.
 
 ## Architecture & Features
 
 - **Framework**: FastAPI running on Uvicorn.
 - **Image Processing**: Pillow (PIL) for image decoding and metadata extraction (width, height, format).
 - **GCS Integration**: Communicates with Google Cloud Storage to download images and upload structured JSON status files.
-- **API Compatibility**: Matches the exact JSON contract of the original Go handler using Pydantic aliases (`gcsPath`, `jobId`, etc.).
+- **API Compatibility**: Uses Pydantic aliases (`gcsPath`, `jobId`, etc.) to match the expected JSON schema contract.
 - **Startup & Latency Simulation**:
   - `INIT_SLEEP_SEC`: Simulates slow container initialization (default: `30` seconds).
   - `HANDLE_INPUT_SLEEP_SEC`: Simulates image processing work delay (default: `2` seconds).

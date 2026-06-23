@@ -42,7 +42,99 @@ def parse_bucket_path(gcs_path: str) -> tuple[str, str]:
     
     return parts[0], parts[1]
 
-def write_status(client: storage.Client, bucket_name: str, job_id: str, status: str, extra: dict) -> None:
+def update_task_status_data(
+    existing_data: dict,
+    job_id: str,
+    status: str,
+    gcs_path: Optional[str] = None,
+    extra: Optional[dict] = None,
+    error_msg: Optional[str] = None,
+    cloud_tasks_meta: Optional[dict] = None
+) -> dict:
+    """
+    Pure state machine function that updates the task status dictionary.
+    Handles transition states (RUNNING, COMPLETED, FAILED), appends retry
+    attempts to the history array, and merges Cloud Tasks tracking metadata.
+    """
+    data = dict(existing_data)  # Create a copy to prevent side-effects
+    if "jobId" not in data:
+        data["jobId"] = job_id
+    if "attempts" not in data:
+        data["attempts"] = []
+        
+    # Automatically resolve GCS path and thumbnail path conventions
+    thumbnail_path = None
+    if gcs_path and gcs_path.startswith("gs://"):
+        data["gcsPath"] = gcs_path
+        try:
+            bucket_name, _ = parse_bucket_path(gcs_path)
+            thumbnail_path = f"gs://{bucket_name}/thumbs/{job_id}.png"
+            data["thumbnailPath"] = thumbnail_path
+        except Exception:
+            pass
+        
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    data["status"] = status
+    data["updatedAt"] = now_iso
+    attempts = data["attempts"]
+    
+    if status == "RUNNING":
+        data["startedAt"] = now_iso
+        attempt_number = len(attempts) + 1
+        new_attempt = {
+            "attemptNumber": attempt_number,
+            "status": "RUNNING",
+            "startedAt": now_iso
+        }
+        if gcs_path:
+            new_attempt["gcsPath"] = gcs_path
+        if thumbnail_path:
+            new_attempt["thumbnailPath"] = thumbnail_path
+        if cloud_tasks_meta:
+            new_attempt.update(cloud_tasks_meta)
+        attempts.append(new_attempt)
+        
+    elif status == "COMPLETED":
+        data["completedAt"] = now_iso
+        if attempts:
+            attempts[-1]["status"] = "COMPLETED"
+            attempts[-1]["completedAt"] = now_iso
+            
+            # Build final attempt result payload
+            result_payload = {}
+            if gcs_path:
+                result_payload["gcsPath"] = gcs_path
+            if thumbnail_path:
+                result_payload["thumbnailPath"] = thumbnail_path
+            if extra:
+                result_payload.update(extra)
+            attempts[-1]["result"] = result_payload
+            
+        if extra:
+            data.update(extra)
+            
+    elif status == "FAILED":
+        data["failedAt"] = now_iso
+        if attempts:
+            attempts[-1]["status"] = "FAILED"
+            attempts[-1]["failedAt"] = now_iso
+            attempts[-1]["error"] = error_msg or "Unknown error"
+        data["error"] = error_msg or "Unknown error"
+        if extra:
+            data.update(extra)
+            
+    return data
+
+def write_status(
+    client: storage.Client,
+    bucket_name: str,
+    job_id: str,
+    status: str,
+    gcs_path: Optional[str] = None,
+    extra: Optional[dict] = None,
+    error_msg: Optional[str] = None,
+    cloud_tasks_meta: Optional[dict] = None
+) -> None:
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(f"results/{job_id}.json")
     
@@ -54,28 +146,20 @@ def write_status(client: storage.Client, bucket_name: str, job_id: str, status: 
     except Exception as e:
         # If the file doesn't exist or we can't read it, start fresh
         logger.warning(f"Could not read existing status for {job_id}: {e}")
-        data = {
-            "jobId": job_id,
-        }
     
-    # Update status and updatedAt
-    data["status"] = status
-    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    data["updatedAt"] = now_iso
-    
-    # Track state transition timestamps
-    if status == "RUNNING":
-        data["startedAt"] = now_iso
-    elif status == "COMPLETED":
-        data["completedAt"] = now_iso
-    elif status == "FAILED":
-        data["failedAt"] = now_iso
-        
-    # Merge any extra fields provided
-    data.update(extra)
+    # Transition state machine
+    updated_data = update_task_status_data(
+        existing_data=data,
+        job_id=job_id,
+        status=status,
+        gcs_path=gcs_path,
+        extra=extra,
+        error_msg=error_msg,
+        cloud_tasks_meta=cloud_tasks_meta
+    )
     
     blob.upload_from_string(
-        data=json.dumps(data),
+        data=json.dumps(updated_data),
         content_type="application/json"
     )
 
@@ -145,7 +229,15 @@ async def handle_task(request: Request, task: TaskStruct):
         logger.info(f"Error parsing path {task.path}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-    thumbnail_path = f"gs://{bucket_name}/thumbs/{task.job_id}.png"
+    # Extract Cloud Tasks metadata headers
+    cloud_tasks_meta = {}
+    if "x-cloudtasks-taskname" in request.headers:
+        cloud_tasks_meta["cloudTasksTaskName"] = request.headers.get("x-cloudtasks-taskname")
+    if "x-cloudtasks-taskretrycount" in request.headers:
+        cloud_tasks_meta["cloudTasksRetryCount"] = request.headers.get("x-cloudtasks-taskretrycount")
+    if "x-cloudtasks-taskexecutioncount" in request.headers:
+        cloud_tasks_meta["cloudTasksExecutionCount"] = request.headers.get("x-cloudtasks-taskexecutioncount")
+
     logger.info(f"Updating task status to RUNNING for jobId: {task.job_id}")
     try:
         write_status(
@@ -153,10 +245,8 @@ async def handle_task(request: Request, task: TaskStruct):
             bucket_name=bucket_name,
             job_id=task.job_id,
             status="RUNNING",
-            extra={
-                "gcsPath": task.path,
-                "thumbnailPath": thumbnail_path
-            }
+            gcs_path=task.path,
+            cloud_tasks_meta=cloud_tasks_meta
         )
     except Exception as e:
         logger.error(f"Failed to write RUNNING status to GCS: {e}")
@@ -178,11 +268,8 @@ async def handle_task(request: Request, task: TaskStruct):
                     bucket_name=bucket_name,
                     job_id=task.job_id,
                     status="FAILED",
-                    extra={
-                        "error": f"Object not found: {task.path}",
-                        "gcsPath": task.path,
-                        "thumbnailPath": thumbnail_path
-                    }
+                    gcs_path=task.path,
+                    error_msg=f"Object not found: {task.path}"
                 )
             except Exception as we:
                 logger.error(f"Failed to write FAILED status to GCS: {we}")
@@ -195,11 +282,8 @@ async def handle_task(request: Request, task: TaskStruct):
                 bucket_name=bucket_name,
                 job_id=task.job_id,
                 status="FAILED",
-                extra={
-                    "error": f"Error accessing object: {e}",
-                    "gcsPath": task.path,
-                    "thumbnailPath": thumbnail_path
-                }
+                gcs_path=task.path,
+                error_msg=f"Error accessing object: {e}"
             )
         except Exception as we:
             logger.error(f"Failed to write FAILED status to GCS: {we}")
@@ -215,11 +299,8 @@ async def handle_task(request: Request, task: TaskStruct):
                 bucket_name=bucket_name,
                 job_id=task.job_id,
                 status="FAILED",
-                extra={
-                    "error": f"Failed to read GCS file: {e}",
-                    "gcsPath": task.path,
-                    "thumbnailPath": thumbnail_path
-                }
+                gcs_path=task.path,
+                error_msg=f"Failed to read GCS file: {e}"
             )
         except Exception as we:
             logger.error(f"Failed to write FAILED status to GCS: {we}")
@@ -238,11 +319,8 @@ async def handle_task(request: Request, task: TaskStruct):
                 bucket_name=bucket_name,
                 job_id=task.job_id,
                 status="FAILED",
-                extra={
-                    "error": f"Failed to decode image: {e}",
-                    "gcsPath": task.path,
-                    "thumbnailPath": thumbnail_path
-                }
+                gcs_path=task.path,
+                error_msg=f"Failed to decode image: {e}"
             )
         except Exception as we:
             logger.error(f"Failed to write FAILED status to GCS: {we}")
@@ -255,12 +333,11 @@ async def handle_task(request: Request, task: TaskStruct):
             bucket_name=bucket_name,
             job_id=task.job_id,
             status="COMPLETED",
+            gcs_path=task.path,
             extra={
-                "gcsPath": task.path,
                 "width": width,
                 "height": height,
-                "format": img_format.lower(),
-                "thumbnailPath": thumbnail_path
+                "format": img_format.lower()
             }
         )
     except Exception as e:
