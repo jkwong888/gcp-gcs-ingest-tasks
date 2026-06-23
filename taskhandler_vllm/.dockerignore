@@ -1,0 +1,23 @@
+# Exclude Python virtual environment
+.venv/
+venv/
+env/
+
+# Exclude local testing and cache directories
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Exclude local debug runs and logs
+local_runs/
+local_runs*.json
+
+# Exclude Git files
+.git/
+.gitignore
+.dockerignore
+
+# Exclude system files
+.DS_Store

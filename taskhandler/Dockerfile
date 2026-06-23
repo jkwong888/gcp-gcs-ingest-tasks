@@ -1,28 +1,19 @@
-# Build the manager binary
-FROM golang:1.17 AS builder
+FROM python:3.11-slim
 
-WORKDIR /workspace
+WORKDIR /app
 
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
+# Copy and install requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
-RUN go mod download
+# Copy application code
+COPY main.py .
 
-# Copy the go source
-COPY cmd cmd/
+# Set up non-root user for security
+RUN useradd -u 10001 -m appuser
+USER appuser
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o taskhandler cmd/handler/main.go
-
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
-WORKDIR /
-COPY --from=builder /workspace/taskhandler .
-USER nonroot:nonroot
 EXPOSE 8090
 
-ENTRYPOINT ["/taskhandler"]
+# Start FastAPI app with uvicorn
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]

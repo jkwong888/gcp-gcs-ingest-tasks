@@ -30,3 +30,16 @@ override.tf.json
 
 terraform.tfvars
 .vscode/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+.env
+
+# Local debug run outputs
+local_runs/

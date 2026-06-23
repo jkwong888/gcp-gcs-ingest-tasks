@@ -1,97 +1,68 @@
-# Cloud Run Deployment Guide
+# Cloud Run Services Deployment Guide
 
-This guide explains how to deploy the **Task API** (Node.js/TypeScript) and the **Task Handler** (Go) to separate Google Cloud Run services.
-
-Instead of a single monolithic script, we provide **two separate, self-contained deployment scripts** located in their respective directories. This allows you to manage, build, and deploy each service independently.
+This guide explains how to build and deploy the **Task API** (Node.js/TypeScript) and the GPU-accelerated **vLLM Task Handler** (Python) application services to Google Cloud Run.
 
 ---
 
-## Prerequisites
+## Step 1: Provision Infrastructure Prerequisite
 
-Before running the deployment scripts, ensure you have:
+Before deploying the application code, you must provision the private VPC network, regional subnets, GCS buckets, queues, and service accounts.
 
-1.  **Google Cloud SDK (`gcloud` CLI)** installed and authenticated:
-    ```bash
-    gcloud auth login
-    gcloud auth application-default login
-    ```
-2.  **A Google Cloud Project** with the following APIs enabled:
-    -   Google Container Registry (GCR)
-    -   Cloud Build (`cloudbuild.googleapis.com`)
-    -   Cloud Run (`run.googleapis.com`)
-    -   Cloud Tasks (`cloudtasks.googleapis.com`)
-    -   Pub/Sub (`pubsub.googleapis.com`)
-    -   Cloud Storage (`storage.googleapis.com`)
-    -   IAM (`iam.googleapis.com`)
+Detailed instructions, network architecture diagrams, and IAM configurations are located in the **[`terraform/` directory](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/terraform/README.md)**. 
 
-3.  **Foundation Infrastructure**: The services require a GCS Bucket, a Cloud Tasks Queue, and multiple Service Accounts with specific IAM permissions to function correctly. 
-    -   You can provision these foundations automatically using the provided Terraform configuration in the `terraform/` directory.
-
----
-
-## Deployment Steps
-
-### Step 1: Provision Infrastructure (Recommended)
-
-Navigate to the `terraform/` directory and apply the configuration to set up the GCS buckets, service accounts, and permissions:
-
+To provision the infrastructure, run from the repository root:
 ```bash
 cd terraform
 terraform init
 terraform apply
 cd ..
 ```
-
-This will output the created resource names and URLs. Specifically, look for:
--   **GCS Bucket Name** (e.g., `jkwng-data-xxxxx`)
--   **Cloud Tasks Queue Name** (e.g., `work-queue-xxxxx`)
+*Note the output GCS bucket name (e.g., `jkwng-data-xxxxx`) and queue name (e.g., `work-queue-xxxxx`) to use in the steps below.*
 
 ---
 
-### Step 2: Deploy the Task Handler First
+## Step 2: Deploy the vLLM Task Handler
 
 Because the Task API depends on the URL of the Task Handler, **you must deploy the Task Handler first**.
 
-1.  Open [taskhandler/deploy.sh](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler/deploy.sh) and update the configuration variables at the top:
+1.  Open [taskhandler_vllm/deploy.sh](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskhandler_vllm/deploy.sh) and configure the deployment variables at the top of the script:
     ```bash
-    PROJECT_ID="your-gcp-project-id"       # <-- Your GCP Project ID
-    REGION="us-central1"                   # <-- Target region (services deployed here)
-    REGISTRY_PROJECT_ID="jkwng-images"     # <-- GCP Project containing the GCR registry
+    PROJECT_ID="your-gcp-project-id"           # <-- Your GCP Project ID
+    REGION="us-central1"                       # <-- Target region (must support L4 GPUs, e.g., us-central1)
+    REGISTRY_PROJECT_ID="jkwng-images"         # <-- GCP Project containing the GCR registry
+    MODEL_PATH="gs://jkwng-model-data/models/google/gemma-4-12B-it-qat-w4a16-ct" # <-- GCS model weights path
     ```
-2.  Run the deployment script from the `taskhandler/` directory:
+2.  Run the deployment script from the `taskhandler_vllm/` directory:
     ```bash
-    cd taskhandler
+    cd taskhandler_vllm
     ./deploy.sh
-    cd ..
+    ```
+3.  **Fast Iterations (Skip Rebuilds)**: To deploy local Python code changes instantly (~5 seconds) without compiling a new Docker image via Cloud Build, run:
+    ```bash
+    ./deploy.sh --skip-build
     ```
 
-**What it does:**
--   Submits Go source code to Google Cloud Build (built and pushed to `gcr.io/${REGISTRY_PROJECT_ID}/taskhandler`).
--   Packages it into a minimal distroless image.
--   Deploys to Cloud Run as a private service (`--no-allow-unauthenticated`) running on port `8090`.
--   Prints the newly created private Service URL.
+#### Deployed Configuration Summary:
+*   **Resources**: 1 NVIDIA L4 GPU, 8 vCPUs, and 32Gi Memory (always-allocated CPU via `--no-cpu-throttling`).
+*   **Direct VPC Egress**: Outbound traffic is routed privately through `task-subnet` using Google's Private Google Access (PGA) to stream weights from GCS.
+*   **Startup Speed (~32s)**: Streams weights in parallel (32 threads) and bypasses the 80-second JIT compilation by enabling Eager Mode (`enforce_eager=True`).
+*   **Probes**: 12-minute startup probe budget (2-minute initial delay + 10-second checks up to 60 times) and 15-second frequent liveness checks on the `/health` endpoint.
+*   **Autoscaling Caps**: Capped at `maxScale = 2` to comply with regional L4 GPU quotas, and `concurrency = 4` to prevent VRAM OOMs.
 
 ---
 
-### Step 3: Deploy the Task API
+## Step 3: Deploy the Task API
 
-Once the Task Handler is successfully deployed, you can deploy the Task API. The deployment script will automatically query Cloud Run to detect the Task Handler's URL if it is not manually specified.
+Once the Task Handler is deployed, deploy the Task API. The script will automatically query Cloud Run to resolve the Task Handler's URL.
 
-1.  Open [taskapi/deploy.sh](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskapi/deploy.sh) and update the configuration variables at the top:
+1.  Open [taskapi/deploy.sh](file:///usr/local/google/home/jkwng/code/gcp-gcs-ingest-tasks/taskapi/deploy.sh) and configure the variables at the top of the script:
     ```bash
-    PROJECT_ID="your-gcp-project-id"       # <-- Your GCP Project ID
-    REGION="us-central1"                   # <-- Target region
-    REGISTRY_PROJECT_ID="jkwng-images"     # <-- GCP Project containing the GCR registry
-
-    # Task API Environment Variables
-    BUCKET_NAME="your-gcs-bucket-name"     # <-- GCS Bucket Name (from Step 1)
-    BUCKET_PREFIX="input"
-    QUEUE_NAME="work-queue"                # <-- Cloud Tasks Queue Name (from Step 1)
-    
-    # Task Handler Integration
-    # Leave TASK_HANDLER_URL blank to automatically detect it!
-    TASK_HANDLER_URL="" 
-    TASKHANDLER_SERVICE_NAME="taskhandler" # <-- Name of the deployed handler service
+    PROJECT_ID="your-gcp-project-id"           # <-- Your GCP Project ID
+    REGION="us-central1"                       # <-- Target region
+    REGISTRY_PROJECT_ID="jkwng-images"         # <-- GCP Project containing the GCR registry
+    BUCKET_NAME="your-gcs-bucket-name"         # <-- GCS Bucket Name (from Step 1)
+    QUEUE_NAME="work-queue"                    # <-- Cloud Tasks Queue Name (from Step 1)
+    TASKHANDLER_SERVICE_NAME="taskhandler"     # <-- Name of your deployed handler service
     ```
 2.  Run the deployment script from the `taskapi/` directory:
     ```bash
@@ -100,29 +71,16 @@ Once the Task Handler is successfully deployed, you can deploy the Task API. The
     cd ..
     ```
 
-**What it does:**
--   Queries Cloud Run to resolve the URL for `taskhandler` in your project and region.
--   Submits TypeScript source code to Google Cloud Build (built and pushed to `gcr.io/${REGISTRY_PROJECT_ID}/taskapi`).
--   Runs TypeScript compilation and Jest tests inside the build container to verify code health before packaging.
--   Deploys to Cloud Run as a public service (`--allow-unauthenticated`) running on port `8000`.
--   Injects all correct environment variables, including the detected `TASK_HANDLER_URL`.
-
 ---
 
 ## Post-Deployment Validation
 
-Once both scripts complete, you will see their endpoints:
--   **Task API URL**: The public endpoint for the web dashboard.
--   **Task Handler URL**: The private endpoint invoked via Cloud Tasks.
-
-1.  **Open the Web Dashboard**:
-    Copy the **Task API URL** and open it in your browser. You should see the file upload dashboard.
-2.  **Upload a File**:
-    Drag and drop an image (or use the upload form) in the dashboard.
-3.  **Verify Flow**:
-    -   The file is uploaded to GCS.
-    -   GCS triggers a Pub/Sub notification to Task API.
-    -   Task API enqueues a task in Cloud Tasks.
-    -   Cloud Tasks invokes the Task Handler.
-    -   Task Handler processes the image (simulated sleep) and writes a JSON status file back to GCS.
-    -   The dashboard will automatically update to show the task transitioning from `PENDING` -> `RUNNING` -> `COMPLETED`.
+1.  **Open the Web Dashboard**: Copy the public **Task API URL** from the script output and open it in a browser.
+2.  **Upload an Image**: Drag and drop an image onto the upload form.
+3.  **Verify the Flow**:
+    *   The file is uploaded to GCS.
+    *   GCS triggers a Pub/Sub notification to the Task API.
+    *   The Task API enqueues an execution task in Cloud Tasks.
+    *   Cloud Tasks invokes the private GPU Task Handler via Direct VPC Egress.
+    *   The Task Handler processes the image via the Gemma VLM and writes the metadata analysis back to GCS.
+    *   The dashboard will update to show the task transitioning from `PENDING` -> `RUNNING` -> `COMPLETED`, displaying the VLM-extracted JSON metadata.

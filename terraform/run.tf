@@ -71,6 +71,13 @@ resource "google_cloud_run_v2_service" "taskapi" {
 
 
     }
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.vpc.name
+        subnetwork = google_compute_subnetwork.subnet.name
+      }
+      egress = "ALL_TRAFFIC"
+    }
     service_account = google_service_account.taskapi.email
   }
 
@@ -104,11 +111,49 @@ resource "google_cloud_run_v2_service" "taskhandler" {
   deletion_protection = false
 
   template {
+    max_instance_request_concurrency = 4
+
     containers {
       image = "us-docker.pkg.dev/cloudrun/container/hello"
       ports { 
         container_port = 8090
       }
+      resources {
+        limits = {
+          cpu    = "8"
+          memory = "32Gi"
+        }
+        cpu_idle = false
+      }
+      startup_probe {
+        initial_delay_seconds = 120
+        timeout_seconds       = 10
+        period_seconds        = 10
+        failure_threshold     = 60
+        http_get {
+          path = "/health"
+        }
+      }
+      liveness_probe {
+        initial_delay_seconds = 0
+        timeout_seconds       = 3
+        period_seconds        = 15
+        failure_threshold     = 3
+        http_get {
+          path = "/health"
+        }
+      }
+    }
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 2
+    }
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.vpc.name
+        subnetwork = google_compute_subnetwork.subnet.name
+      }
+      egress = "ALL_TRAFFIC"
     }
     service_account = google_service_account.taskhandler_sa.email
   }

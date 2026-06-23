@@ -220,6 +220,9 @@
 
                 <span class="text-slate-500">Format:</span>
                 <span id="modalFormat" class="font-semibold text-slate-900 uppercase text-right">Pending</span>
+
+                <span class="text-slate-500">E2E Process Time:</span>
+                <span id="modalDuration" class="font-semibold text-indigo-600 text-right">Pending</span>
               </div>
             </div>
 
@@ -780,13 +783,32 @@
       
       const details = task.resultDetails;
       
-      // Update dimensions and format
+      // Update dimensions, format and duration
+      const modalDuration = document.getElementById('modalDuration');
       if (task.status === 'COMPLETED' && details) {
         modalDimensions.textContent = `${details.width} x ${details.height}`;
         modalFormat.textContent = details.format;
+        if (details.completedAt) {
+          const t1 = new Date(task.uploadedAt).getTime();
+          const t4 = new Date(details.completedAt).getTime();
+          modalDuration.textContent = formatDuration(t4 - t1);
+        } else {
+          modalDuration.textContent = 'N/A';
+        }
+      } else if (task.status === 'FAILED') {
+        modalDimensions.textContent = 'Failed';
+        modalFormat.textContent = 'Failed';
+        if (details && (details.failedAt || details.updatedAt)) {
+          const t1 = new Date(task.uploadedAt).getTime();
+          const t4 = new Date(details.failedAt || details.updatedAt).getTime();
+          modalDuration.textContent = `${formatDuration(t4 - t1)} (Failed)`;
+        } else {
+          modalDuration.textContent = 'Failed';
+        }
       } else {
-        modalDimensions.textContent = task.status === 'FAILED' ? 'Failed' : 'Pending';
-        modalFormat.textContent = task.status === 'FAILED' ? 'Failed' : 'Pending';
+        modalDimensions.textContent = 'Pending';
+        modalFormat.textContent = 'Pending';
+        modalDuration.textContent = 'Processing...';
       }
 
       // Load Image Preview
@@ -842,44 +864,59 @@
         desc: 'Image uploaded to input/ prefix',
         time: task.uploadedAt,
         active: true,
-        icon: 'fa-solid fa-cloud-arrow-up'
+        icon: 'fa-solid fa-cloud-arrow-up',
+        durationText: null
       });
 
+      // Timestamps for duration calculation
+      const t1 = new Date(task.uploadedAt).getTime();
+      const t2 = details?.queuedAt ? new Date(details.queuedAt).getTime() : null;
+      const t3 = details?.startedAt ? new Date(details.startedAt).getTime() : null;
+      const t4 = (details?.completedAt || details?.failedAt) ? new Date(details.completedAt || details.failedAt).getTime() : null;
+
       // Step 2: Queued
+      const pendingDuration = t2 ? t2 - t1 : null;
       steps.push({
         name: 'Queued',
         desc: 'Pub/Sub event triggered, Cloud Task created',
         time: details?.queuedAt || (task.status !== 'PENDING' ? task.uploadedAt : null),
         active: task.status !== 'PENDING',
-        icon: 'fa-solid fa-list-ol'
+        icon: 'fa-solid fa-list-ol',
+        durationText: pendingDuration ? `spent ${formatDuration(pendingDuration)} in PENDING` : null
       });
 
-      // Step 3: Running
+      // Step 3: Running (Processing)
+      const queuedDuration = (t3 && t2) ? t3 - t2 : null;
       steps.push({
         name: 'Processing',
         desc: 'Go task handler processes image bytes',
-        time: details?.status === 'RUNNING' || details?.status === 'COMPLETED' || details?.status === 'FAILED' ? details.updatedAt : null,
+        time: t3 || (details?.status === 'RUNNING' || details?.status === 'COMPLETED' || details?.status === 'FAILED' ? details.updatedAt : null),
         active: task.status === 'RUNNING' || task.status === 'COMPLETED' || task.status === 'FAILED',
-        icon: 'fa-solid fa-gear'
+        icon: 'fa-solid fa-gear',
+        durationText: queuedDuration ? `spent ${formatDuration(queuedDuration)} in QUEUED` : null
       });
 
       // Step 4: Finished (Completed or Failed)
+      const runningDuration = (t4 && t3) ? t4 - t3 : null;
+
       if (task.status === 'FAILED') {
         steps.push({
           name: 'Failed',
           desc: details?.error || 'Unknown error occurred in pipeline',
-          time: details?.updatedAt || null,
+          time: details?.failedAt || details?.updatedAt || null,
           active: true,
           failed: true,
-          icon: 'fa-solid fa-circle-xmark'
+          icon: 'fa-solid fa-circle-xmark',
+          durationText: runningDuration ? `spent ${formatDuration(runningDuration)} in RUNNING` : null
         });
       } else {
         steps.push({
           name: 'Finished',
           desc: 'Thumbnail generated & saved to thumbs/',
-          time: task.status === 'COMPLETED' ? details?.updatedAt : null,
+          time: details?.completedAt || (task.status === 'COMPLETED' ? details?.updatedAt : null),
           active: task.status === 'COMPLETED',
-          icon: 'fa-solid fa-circle-check'
+          icon: 'fa-solid fa-circle-check',
+          durationText: runningDuration ? `spent ${formatDuration(runningDuration)} in RUNNING` : null
         });
       }
 
@@ -915,6 +952,7 @@
               <span class="text-[10px] text-slate-400">${step.time ? formatDate(step.time) : ''}</span>
             </div>
             <p class="text-[11px] text-slate-500 mt-0.5">${step.desc}</p>
+            ${step.durationText ? `<p class="text-[10px] text-indigo-500 font-semibold mt-1 flex items-center"><i class="fa-regular fa-clock mr-1.5 text-[9px]"></i>${step.durationText}</p>` : ''}
           </div>
         `;
         modalTimeline.appendChild(item);
@@ -933,6 +971,16 @@
       if (!dateStr) return '';
       const d = new Date(dateStr);
       return d.toLocaleString();
+    }
+
+    function formatDuration(ms) {
+      if (ms === undefined || ms === null || isNaN(ms) || ms < 0) return '';
+      if (ms < 1000) return `${ms}ms`;
+      const seconds = (ms / 1000).toFixed(1);
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = Math.round((ms % 60000) / 1000);
+      return `${minutes}m ${remainingSeconds}s`;
     }
 
     function formatBytes(bytes, decimals = 2) {

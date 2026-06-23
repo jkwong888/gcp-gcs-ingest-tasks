@@ -1,0 +1,16 @@
+# Ignore python cache
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+.pytest_cache/
+
+# Ignore local environments
+.venv/
+venv/
+env/
+.env
+
+# Ignore tests, docs, and scripts
+test_main.py
+README.md
+deploy.sh
