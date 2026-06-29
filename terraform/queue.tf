@@ -42,3 +42,23 @@ resource "google_service_account_iam_member" "taskapi_tasks_sa_user" {
   member = "serviceAccount:${google_service_account.taskapi.email}"
 }
 
+# ==============================================================================
+# Ingestion Task API IAM Permissions
+# ==============================================================================
+
+# 1. Allow taskapi-ingest to enqueue tasks in the work queue
+resource "google_cloud_tasks_queue_iam_member" "taskapi_ingest_enqueuer" {
+  project  = google_cloud_tasks_queue.work.project
+  name     = google_cloud_tasks_queue.work.name
+  location = google_cloud_tasks_queue.work.location
+  role     = "roles/cloudtasks.enqueuer"
+  member   = "serviceAccount:${google_service_account.taskapi_ingest.email}"
+}
+
+# 2. Allow taskapi-ingest to impersonate the tasks_sa service account
+resource "google_service_account_iam_member" "taskapi_ingest_tasks_sa_user" {
+  service_account_id = google_service_account.tasks_sa.id
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.taskapi_ingest.email}"
+}
+

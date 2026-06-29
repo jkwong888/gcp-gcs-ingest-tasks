@@ -24,13 +24,11 @@ describe('POST /uploadNotification', () => {
     subscription: 'projects/test-project/subscriptions/test-sub',
   };
 
-  it('should successfully process notification and trigger cloud task', async () => {
+  it('should successfully process notification and trigger cloud task (local dev bypass mode)', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/uploadNotification',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
+      // No auth headers
       payload: validPayload,
     });
 
@@ -41,49 +39,33 @@ describe('POST /uploadNotification', () => {
     expect(resJson.gcsPath).toBe('gs://test-bucket/upload/video.mp4');
   });
 
-  it('should return 401 if authorization header is missing', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/uploadNotification',
-      payload: validPayload,
-    });
-
-    expect(response.statusCode).toBe(401);
-  });
-
-  it('should return 401 if token verification fails', async () => {
-    (authClient.verifyIdToken as jest.Mock).mockRejectedValueOnce(new Error('Invalid token signature'));
-
+  it('should successfully process notification and trigger cloud task (IAP mode)', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/uploadNotification',
       headers: {
-        authorization: 'Bearer bad-token',
+        'x-goog-authenticated-user-email': 'accounts.google.com:mock-storage-sa@project.iam.gserviceaccount.com',
       },
       payload: validPayload,
     });
 
-    expect(response.statusCode).toBe(401);
+    expect(response.statusCode).toBe(201);
+    const resJson = JSON.parse(response.body);
+    expect(resJson.jobId).toBeDefined();
+    expect(resJson.taskId).toBe('projects/mock-project/locations/mock-region/queues/mock-queue/tasks/mock-task-id');
   });
 
-  it('should return 401 if claim email does not match expected storage SA', async () => {
-    (authClient.verifyIdToken as jest.Mock).mockResolvedValueOnce({
-      getPayload: () => ({
-        email_verified: true,
-        email: 'wrong-sa@project.iam.gserviceaccount.com',
-      }),
-    });
-
+  it('should return 403 if IAP email does not match expected storage SA', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/uploadNotification',
       headers: {
-        authorization: 'Bearer wrong-email-token',
+        'x-goog-authenticated-user-email': 'accounts.google.com:wrong-user@gmail.com',
       },
       payload: validPayload,
     });
 
-    expect(response.statusCode).toBe(401);
+    expect(response.statusCode).toBe(403);
   });
 
   it('should return 200 and ignore the event if eventType is not OBJECT_FINALIZE', async () => {
@@ -101,9 +83,6 @@ describe('POST /uploadNotification', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/uploadNotification',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
       payload: payload,
     });
 
@@ -125,9 +104,6 @@ describe('POST /uploadNotification', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/uploadNotification',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
       payload: payload,
     });
 
@@ -149,9 +125,6 @@ describe('POST /uploadNotification', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/uploadNotification',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
       payload: payload,
     });
 
@@ -164,9 +137,6 @@ describe('POST /uploadNotification', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/uploadNotification',
-      headers: {
-        authorization: 'Bearer valid-jwt-token',
-      },
       payload: validPayload,
     });
 

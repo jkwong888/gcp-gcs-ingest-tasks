@@ -89,7 +89,7 @@ log_info "========================================="
 if [ "$SKIP_BUILD" = false ]; then
     log_info "Submitting Cloud Build for vLLM Task Handler..."
     # We run Cloud Build from the directory of the script (which is taskhandler_vllm/)
-    gcloud builds submit --project="$PROJECT_ID" --tag "$IMAGE_TAG" .
+    gcloud builds submit --project="$PROJECT_ID" --tag "$IMAGE_TAG"  --machine-type=E2_HIGHCPU_8 .
 else
     log_warn "Skipping Cloud Build. Deploying with existing image: $IMAGE_TAG"
 fi

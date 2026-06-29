@@ -85,6 +85,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --port=8090 \
     --no-allow-unauthenticated \
     --service-account="$SERVICE_ACCOUNT" \
+    --concurrency=8 \
     --set-env-vars="INIT_SLEEP_SEC=${INIT_SLEEP_SEC},HANDLE_INPUT_SLEEP_SEC=${HANDLE_INPUT_SLEEP_SEC}" \
     --quiet
 

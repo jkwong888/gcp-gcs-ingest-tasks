@@ -44,6 +44,13 @@ resource "google_storage_bucket_iam_member" "taskapi_object_admin" {
   member = "serviceAccount:${google_service_account.taskapi.email}"
 }
 
+# Allow taskapi-ingest to manage objects on GCS (read and write thumbnails/status)
+resource "google_storage_bucket_iam_member" "taskapi_ingest_object_admin" {
+  bucket = google_storage_bucket.data.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.taskapi_ingest.email}"
+}
+
 // SA for generating signed urls 
 resource "google_service_account" "storage" {
   project   = module.service_project.project_id
@@ -72,9 +79,10 @@ resource "google_pubsub_subscription" "gcs_notification" {
   ack_deadline_seconds = 20
 
   push_config {
-    push_endpoint = "${google_cloud_run_v2_service.taskapi.uri}/uploadNotification"
+    push_endpoint = "${google_cloud_run_v2_service.taskapi_ingest.uri}/uploadNotification"
     oidc_token {
       service_account_email = google_service_account.storage.email
+      audience              = google_cloud_run_v2_service.taskapi_ingest.uri
     }
   }
 }

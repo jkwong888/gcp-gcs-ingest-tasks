@@ -53,3 +53,15 @@ variable "subnets" {
   default = []
 }
 
+variable "iap_client_id" {
+  type        = string
+  description = "The Client ID of the Google-managed OAuth client created by IAP for Cloud Run. Leave empty for the first apply."
+  default     = ""
+}
+
+variable "iap_accessor_members" {
+  type        = list(string)
+  description = "List of members (e.g., 'user:email@example.com') to grant access to the IAP-secured Task API."
+  default     = []
+}
+

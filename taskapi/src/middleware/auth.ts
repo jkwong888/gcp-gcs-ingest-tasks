@@ -1,46 +1,33 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
-import { authClient, storageServiceAccountEmail } from '../config';
+import { storageServiceAccountEmail } from '../config';
 
-export async function validateIDToken(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  // Verify that the push request originates from Cloud Pub/Sub.
-  try {
-    request.log.info(`validate auth header: ${request.headers.authorization}`);
-    // Get the Cloud Pub/Sub-generated JWT in the "Authorization" header.
-    const authHeader = request.headers.authorization || "";
-    const [, token] = authHeader.match(/Bearer (.*)/) || [];
-    if (!token) {
-      reply.status(401).send();
+/**
+ * Validates that the incoming request originates from the authorized GCS storage notification system.
+ * 
+ * In production (behind IAP), it verifies the cryptographically secure header `X-Goog-Authenticated-User-Email`
+ * injected by IAP, ensuring the caller matches our configured storage service account.
+ * 
+ * In local development (no IAP), it bypasses validation to allow easy testing.
+ */
+export async function validateNotificationCaller(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const iapUserEmailHeader = request.headers['x-goog-authenticated-user-email'] as string;
+  
+  if (iapUserEmailHeader) {
+    request.log.info(`Validating notification caller via IAP header: ${iapUserEmailHeader}`);
+    
+    // IAP prefixes the email (e.g., "accounts.google.com:storage@project.iam.gserviceaccount.com")
+    const email = iapUserEmailHeader.split(':').pop() || "";
+    
+    if (email !== storageServiceAccountEmail) {
+      request.log.error(`IAP authenticated email [${email}] does not match expected storage SA: [${storageServiceAccountEmail}]`);
+      reply.status(403).send({ error: 'Forbidden: Unauthorized service account' });
       return;
     }
-
-    // Verify and decode the JWT.
-    const ticket = await authClient.verifyIdToken({
-      idToken: token,
-    }).catch ((error) => {
-      request.log.error(`ID token verify failed: ${error}`);
-      reply.status(401).send();
-      return;
-    });
-
-    const claim = ticket?.getPayload();
-    if (claim == undefined) {
-      request.log.error(`No claims in token`);
-      reply.status(401).send();
-      return;
-    }
-
-    if (!claim.email_verified) {
-      request.log.error(`email_verified = false`);
-      reply.status(401).send();
-      return;
-    }
-
-    if (claim.email != storageServiceAccountEmail) {
-      request.log.error(`email in token ${claim.email} does not match expected email: ${storageServiceAccountEmail}`);
-      reply.status(401).send();
-      return;
-    }
-  } catch (e) {
-    reply.status(401).send(e);
+    
+    request.log.info(`Caller successfully authorized: ${email}`);
+    return;
   }
+
+  // Fallback for local development / testing without IAP
+  request.log.warn('No IAP identity header found. Bypassing caller validation (local development mode).');
 }

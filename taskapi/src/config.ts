@@ -20,3 +20,7 @@ export const storage = new Storage();
 export const taskClient = new CloudTasksClient();
 export const authClient = new OAuth2Client();
 export const logger = pino();
+
+if (!storageServiceAccountEmail) {
+  logger.warn("STORAGE_SERVICE_ACCOUNT_EMAIL is not set. Ingestion notifications will not be validated in production.");
+}

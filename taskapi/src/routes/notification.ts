@@ -3,7 +3,7 @@ import { FromSchema } from 'json-schema-to-ts';
 import { v4 as uuidv4 } from 'uuid';
 import { Jimp, JimpMime } from 'jimp';
 import { pubsubUploadNotification } from '../models/notification';
-import { validateIDToken } from '../middleware/auth';
+import { validateNotificationCaller } from '../middleware/auth';
 import { createHttpTaskWithToken } from '../utils/gcp';
 import { storage, bucketName, bucketPrefix } from '../config';
 
@@ -13,7 +13,7 @@ export async function notificationRoutes(fastify: FastifyInstance) {
   }>(
     '/uploadNotification',
     {
-      preHandler: validateIDToken,
+      preHandler: validateNotificationCaller,
     },
     async function (req, reply) {
       const attributes = req.body.message?.attributes;
